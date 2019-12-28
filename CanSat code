@@ -1,0 +1,840 @@
+#include <Wire.h>//biblioteka BME280, akcelerometru i zyroskopu
+#include <Adafruit_Sensor.h>//biblioteka BME280
+#include <Adafruit_BME280.h>//biblioteka BME280
+
+#include <LSM6.h>//biblioteka akcelerometru i zyroskopu
+
+#include <SPI.h>//biblioteka komunikacji SPI
+
+#include <SD.h>//biblioteka karty SD
+
+#include <OneWire.h>//biblioteka DS18B20
+
+#include <RH_RF95.h>//biblioteka nadajnika
+
+#include <Adafruit_GPS.h> //biblioteka gps
+
+#include <Arduino.h>   // required before wiring_private.h
+#include "wiring_private.h" // pinPeripheral() function
+
+#define SEALEVELPRESSURE_HPA (1013.25)//zdefiniowanie cisnienia nad poziomem morza
+
+Uart Serial2 (&sercom1, 11, 10, SERCOM_RX_PAD_0, UART_TX_PAD_2);
+ 
+void SERCOM1_Handler()
+{
+  Serial2.IrqHandler();
+}
+
+#define GPSSerial Serial1
+
+#define PMSSerial Serial2
+
+Adafruit_BME280 bme;//zainicjowanie zmiennej do czujnika BME280
+
+Adafruit_GPS GPS(&GPSSerial); //stworzenie obiektu GPS
+
+File plik;//zainicjowanie zmiennej pliku tekstowego
+
+uint32_t timer = millis();//utworzenie stopera do odmierzania czasu pomiedzy pomiarami
+
+bool znalezione_SD = 0;
+bool znalezione_BME280 = 0;
+bool znalezione_DS18B20 = 0;
+bool znalezione_PMS = 0;
+bool znalezione_GPS = 0;
+bool znalezione_zyroskop = 0;
+
+int pin_cs_nadajnik = 8;
+int pin_RST_nadajnik = 4;
+int pin_INT_nadajnik = 3;
+#define czestotliwosc_nadajnika 433.1
+
+RH_RF95 rf95(pin_cs_nadajnik, pin_INT_nadajnik);
+
+int pin_cs_SD = 12;
+
+OneWire  ds18b20(6);
+
+LSM6 imu; //zmienna do pomiarow z żyroskopu i akcelerometru
+
+//liczenie czasu potrzebnego kazdemu czujnikowi
+uint32_t poczatek_calkowity;
+uint32_t koniec_calkowity;
+uint32_t poczatek;
+uint32_t koniec;
+
+//obiekt do pomiaru PMS7003
+struct pms5003data 
+{
+  uint16_t framelen;
+  uint16_t pm10_standard, pm25_standard, pm100_standard;
+  uint16_t pm10_env, pm25_env, pm100_env;
+  uint16_t particles_03um, particles_05um, particles_10um, particles_25um, particles_50um, particles_100um;
+  uint16_t unused;
+  uint16_t checksum;
+};
+
+struct pms5003data data;
+
+
+//BME280
+ /*
+ VIN - 3.3V
+ GND - GND
+ SCL - SCL
+ SDA - SDA
+ */
+
+//SD Card
+ /*
+ wszystkie piny z jednej linii
+ GND - GND
+ VDD - 3.3V
+ DI - MOSI
+ DO - MISO
+ SCLK - SCK
+ CS - pin 12
+ */
+
+//LoRa Radio
+ /*
+ VCC - 3.3V
+ GND - GND
+ MOSI - MOSI
+ MISO - MISO
+ CLK - SCK
+ CS - pin 8
+ RST - pin 4
+ INT - pin 3
+ */
+
+//DS18B20
+/*
+ numeracja od lewej strony (płaska)
+ 1 pin - GND
+ 2 pin - pin 6 + 3.3V przez rezystor 4.7k Ohm
+ 3 pin - 3.3V
+*/
+
+//GPS
+/*
+ VCC - 3.3V
+ GND - GND
+ TX - RX
+ RX - TX
+*/
+
+//Akcelerometr i zyroskop
+/*
+VIN - 3.3V
+GND - GND
+SCL - SCL
+SDA - SDA
+*/
+
+//PMS
+/*
+VCC - Step-Up VOUT - 3.3V
+GND - GND
+TX - 11
+RX - 10
+*/
+
+//Step-UP
+/*
+VIN - 3.3V
+GND - GND
+VOUT - napiecie wyjsciowe 5V
+*/
+
+void double_to_char(double liczba, char tekst[], int &liczba_znakow, int liczba_miejsc_po_przecinku)
+{
+  int ujemna = 0;
+
+  //jesli liczba jest ujemna zamienia ja na dodatnia
+  if(liczba < 0)
+  {
+    liczba = -liczba;
+    ujemna = 1;
+  }
+  //zapisuje czesc calkowita liczby w zmiennej
+  int czesc_calkowita = (int)liczba;
+
+  //oblicza z ilu cyfr sklada sie liczba calkowita
+  int liczba_cyfr_calkowita = 1;
+  for(int i=10; i<10000000; i*=10)
+  {
+    if(czesc_calkowita < i)
+    {
+      break;
+    }
+    liczba_cyfr_calkowita++;
+  }
+
+  //usuwa przecinek z liczby, za pomoca mnozenia
+  int mnoznik = 1;
+  for(int i=0; i<liczba_miejsc_po_przecinku; i++)
+  {
+    mnoznik*=10;
+  }
+  liczba*=mnoznik;
+
+  //oblicza z ilu cyfr sklada sie cala liczba bez przecinka
+  int liczba_bez_przecinka = (int)liczba;
+  int liczba_cyfr_bez_przecinka = 1;
+  for(int i=10; i<10000000000; i*=10)
+  {
+    if(liczba_bez_przecinka < i)
+    {
+      break;
+    }
+    liczba_cyfr_bez_przecinka++;
+  }
+
+  //zapisuje liczbe bez przecinka w postaci tekstu
+  itoa(liczba_bez_przecinka, tekst+ujemna, 10);
+  //przesuwanie tekstu w przypadku, gdy liczba calkowita jest 0
+  for(int i=liczba_cyfr_bez_przecinka; i>=0; i--)
+  {
+    tekst[i+liczba_cyfr_calkowita+liczba_miejsc_po_przecinku-liczba_cyfr_bez_przecinka] = tekst[i];
+  }
+  //dopisyanie '0' w przypadku gdy liczba calkowita i kolejne cyfry sa rowne 0
+  for(int i=ujemna; i<liczba_cyfr_calkowita+liczba_miejsc_po_przecinku-liczba_cyfr_bez_przecinka+ujemna; i++)
+  {
+    tekst[i] = '0';
+  }
+  //dopisywanie '-' jesli liczba jest ujemna
+  if(ujemna == 1)
+  {
+    tekst[0] = '-';
+  }
+  //przesuwanie cyfr ulamkowych, zeby wpisac przecinek
+  for(int i=ujemna+liczba_cyfr_calkowita+liczba_miejsc_po_przecinku-1; i>ujemna+liczba_cyfr_calkowita-1; i--)
+  {
+    tekst[i+1]=tekst[i];
+  }
+  //dopisanie '.'
+  tekst[ujemna+liczba_cyfr_calkowita] = '.';
+  //policzenie liczby znakow
+  liczba_znakow = ujemna+liczba_cyfr_calkowita+1+liczba_miejsc_po_przecinku;
+}
+
+
+void koordynaty_na_char(char lokalizacja[], double szerokosc_geo, char szerokosc_znak, double dlugosc_geo, char dlugosc_znak)
+{
+  char szerokosc_tekst[11] = "          ";
+  int liczba_znakow_szerokosc = 0;
+  char dlugosc_tekst[11] = "          ";
+  int liczba_znakow_dlugosc = 0;
+
+  double_to_char(szerokosc_geo, szerokosc_tekst, liczba_znakow_szerokosc, 4);
+  double_to_char(dlugosc_geo, dlugosc_tekst, liczba_znakow_dlugosc, 4);
+
+  for(int i=0; i<10-liczba_znakow_szerokosc; i++)//jesli szerokosc ma mniej znakow niz 10
+  {
+    lokalizacja[i] = ' ';
+  }
+  for(int i=0; i<liczba_znakow_szerokosc; i++)
+  {
+    lokalizacja[i+10-liczba_znakow_szerokosc] = szerokosc_tekst[i];
+  }
+
+  lokalizacja[10] = szerokosc_znak;
+  lokalizacja[11] = ',';
+
+  for(int i=0; i<10-liczba_znakow_dlugosc; i++)//jesli dlugosc ma mniej znakow niz 10
+  {
+    lokalizacja[i+12] = ' ';
+  }
+  for(int i=0; i<liczba_znakow_dlugosc; i++)
+  {
+    lokalizacja[i+22-liczba_znakow_dlugosc] = dlugosc_tekst[i];
+  }
+
+  lokalizacja[22] = dlugosc_znak;
+}
+
+void odczytywanie_BME280(double &temperatura, double &cisnienie, double &wilgotnosc)
+{
+  temperatura = bme.readTemperature();//odczytywanie temperatury
+  cisnienie = bme.readPressure() / 100.0F;//odczytywanie cisnienia
+  wilgotnosc = bme.readHumidity();//odczytywanie wilgotnosci
+}
+
+void zapisywanie_SD(double temperatura_BME280, double cisnienie, double wilgotnosc, double temperatura_DS18B20, char czas[], char data[], int fix, int quality, char lokalizacja[], double szybkosc_wezly, double kat, double wysokosc, int liczba_satelit, char akcelerometr_zyroskop[], int PM1, int PM25, int PM10)
+{
+  digitalWrite(pin_cs_SD, LOW);
+  plik = SD.open("test.txt", FILE_WRITE);
+  if(plik)
+  {
+    Serial.println("Zapis SD");
+    plik.print("Temperatura_BME280: ");
+    plik.print(temperatura_BME280);
+    plik.print("*C Cisnienie: ");
+    plik.print(cisnienie);
+    plik.print("hPa Wilgotnosc: ");
+    plik.print(wilgotnosc);
+    plik.print("% Temperatura_DS18B20: ");
+    plik.print(temperatura_DS18B20);
+    plik.print("*C Czas: ");
+    plik.print(czas);
+    plik.print(" Data: ");
+    plik.print(data);
+    plik.print(" Fix: ");
+    plik.print(fix);
+    plik.print(" Quality: ");
+    plik.print(quality);
+    plik.print(" Lokalizacja: ");
+    plik.print(lokalizacja);
+    plik.print(" Szybkosc (wezly): ");
+    plik.print(szybkosc_wezly);
+    plik.print(" Kat: ");
+    plik.print(kat);
+    plik.print(" Wysokosc: ");
+    plik.print(wysokosc);
+    plik.print(" Liczba satelit: ");
+    plik.print(liczba_satelit);
+    plik.print(" Akcelerometr i zyroskop: ");
+    plik.print(akcelerometr_zyroskop);
+    plik.print(" PM1: ");
+    plik.print(PM1);
+    plik.print(" PM2.5: ");
+    plik.print(PM25);
+    plik.print(" PM10: ");
+    plik.println(PM10);
+  }
+  else
+  {
+    Serial.println("Nie mozna otworzyc pliku na karcie SD");
+  }
+
+  plik.close();
+  digitalWrite(pin_cs_SD, HIGH);
+}
+
+void odczytywanie_DS18B20(double &temperatura_DS18B20)
+{
+  byte present = 0;
+  byte type_s;
+  byte data[12];
+  byte addr[8];
+  double celsius;
+  
+  ds18b20.reset_search();
+  if (!ds18b20.search(addr)) 
+  {
+    Serial.println("Nie znaleziono DS18B20");
+    ds18b20.reset_search();
+    znalezione_DS18B20 = 0;
+  }
+  else
+  {
+    znalezione_DS18B20 = 1;
+  }
+
+  if(znalezione_DS18B20 == 1)
+  {
+    if (OneWire::crc8(addr, 7) != addr[7])
+    {
+        Serial.println("1.Blad z odczytem teperatury DS18B20");
+        znalezione_DS18B20 = 0;
+    }
+    else
+    {
+      ds18b20.reset();
+      ds18b20.select(addr);
+      ds18b20.write(0x44, 1);
+      
+      present = ds18b20.reset();
+      ds18b20.select(addr);    
+      ds18b20.write(0xBE);      
+
+      for (byte i = 0; i < 9; i++)
+      {           
+        data[i] = ds18b20.read();
+      }
+    
+      int16_t raw = (data[1] << 8) | data[0];
+    
+      if(addr[0] == 0x28)
+      {
+        byte cfg = (data[4] & 0x60);
+        if (cfg == 0x00)
+          raw = raw & ~7;
+        else if (cfg == 0x20)
+          raw = raw & ~3;
+        else if (cfg == 0x40)
+          raw = raw & ~1;
+        
+        celsius = (double)raw / 16.0;
+        temperatura_DS18B20 = celsius;
+      }
+      else
+      {
+        Serial.println("2.Blad z odczytem teperatury DS18B20");
+        znalezione_DS18B20 = 0;
+      }
+    } 
+  }
+}
+
+void odczytywanie_stale_gps()
+{
+  GPS.read();
+  
+  if (GPS.newNMEAreceived()) 
+  {
+    if (!GPS.parse(GPS.lastNMEA()))
+    {
+      return;
+    }  
+  }
+}
+
+void odczytywanie_gps(char czas[], char data[], int &fix, int &quality, char lokalizacja[], double &szybkosc_wezly, double &kat, double &wysokosc, int &liczba_satelit)
+{
+  znalezione_GPS = 0;
+  
+  //CZAS
+  if(GPS.hour < 10)
+  {
+    czas[0] = '0';
+    itoa(GPS.hour, czas+1, 10);
+  }
+  else
+  {
+    itoa(GPS.hour, czas, 10);
+  }
+  czas[2] = ':';
+  if(GPS.minute < 10)
+  {
+    czas[3] = '0';
+    itoa(GPS.minute, czas+4, 10);
+  }
+  else
+  {
+    itoa(GPS.minute, czas+3, 10);
+  }
+  czas[5] = ':';
+  if(GPS.seconds < 10)
+  {
+    czas[6] = '0';
+    itoa(GPS.seconds, czas+7, 10);
+  }
+  else
+  {
+    itoa(GPS.seconds, czas+6, 10);
+  }
+
+  //DATA
+  if(GPS.day < 10)
+  {
+    data[0] = '0';
+    itoa(GPS.day, data+1, 10);
+  }
+  else
+  {
+    itoa(GPS.day, data, 10);
+  }
+  data[2] = '.';
+  if(GPS.month < 10)
+  {
+    data[3] = '0';
+    itoa(GPS.month, data+4, 10);
+  }
+  else
+  {
+    itoa(GPS.month, data+3, 10);
+  }
+  data[5] = '.';
+  data[6] = '2';
+  data[7] = '0';
+  if(GPS.year < 10)
+  {
+    data[8] = '0';
+    itoa(GPS.year, data+9, 10);
+  }
+  else
+  {
+    itoa(GPS.year, data+8, 10);
+  }
+
+  fix = (int)GPS.fix;
+  quality = (int)GPS.fixquality;
+
+  if(fix)
+  {
+    znalezione_GPS = 1;
+    double szerokosc_geo = GPS.latitude;
+    char szerokosc_znak = GPS.lat;
+    double dlugosc_geo = GPS.longitude;
+    char dlugosc_znak = GPS.lon;
+    koordynaty_na_char(lokalizacja, szerokosc_geo, szerokosc_znak, dlugosc_geo, dlugosc_znak);
+    szybkosc_wezly = GPS.speed;
+    kat = GPS.angle;
+    wysokosc = GPS.altitude;
+    liczba_satelit = (int)GPS.satellites;
+  }
+}
+
+boolean readPMSdata(Stream *s) 
+{
+  if (! s->available()) 
+  {
+    Serial.println("S NIEDOSTEPNE");
+    return false;
+  }
+
+//odczytuje bit i szuka startowego '0x42'
+  if (s->peek() != 0x42) 
+  {
+    s->read();
+    Serial.println("NIE ZNALEZIONO 0x42");
+    return false;
+  }
+
+  //Odczytuje 32 bity
+  if (s->available() < 32) 
+  {
+    Serial.println("ZLE ODCZYTANIE 32 BITOW");
+    return false;
+  }
+  
+  uint8_t buffer[32];    
+  uint16_t sum = 0;
+  s->readBytes(buffer, 32);
+  
+  
+  for (uint8_t i=0; i<30; i++) 
+  {
+    sum += buffer[i];
+  }
+  
+
+  uint16_t buffer_u16[15];
+  for (uint8_t i=0; i<15; i++) 
+  {
+    buffer_u16[i] = buffer[2 + i*2 + 1];
+    buffer_u16[i] += (buffer[2 + i*2] << 8);
+  }
+  
+  //umieszcza dane w strukturze "data"
+  memcpy((void *)&data, (void *)buffer_u16, 30);
+  
+  if (sum != data.checksum) 
+  {
+    Serial.println("ZLA SUMA KONTROLNA");
+    return false;
+  }
+  return true;
+}
+
+void odczytywanie_PMS7003(int &PM1, int &PM25, int &PM10)
+{
+  //jesli nie uda sie odczytac, to robi 40 powtorzen
+  znalezione_PMS = 0;
+  for(int i=0; i<40; i++)
+  {
+    if(readPMSdata(&PMSSerial))
+    {
+      PM1 = data.pm10_standard;
+      PM25 = data.pm25_standard;
+      PM10 = data.pm100_standard;
+      i=40;
+      znalezione_PMS = 1;
+    }
+  }
+}
+
+void wyswietlanie(double temperatura_BME280, double cisnienie, double wilgotnosc, double temperatura_DS18B20, char czas[], char data[], int fix, int quality, char lokalizacja[], double szybkosc_wezly, double kat, double wysokosc, int liczba_satelit, char akcelerometr_zyroskop[], int PM1, int PM25, int PM10)
+{
+  Serial.print("Temperatura_BME280: ");
+  Serial.print(temperatura_BME280);
+  Serial.print("*C Cisnienie: ");
+  Serial.print(cisnienie);
+  Serial.print("hPa Wilgotnosc: ");
+  Serial.print(wilgotnosc);
+  Serial.print("% Temperatura_DS18B20: ");
+  Serial.print(temperatura_DS18B20);
+  Serial.println("*C");
+  Serial.print("Czas: ");
+  Serial.print(czas);
+  Serial.print(" Data: ");
+  Serial.print(data);
+  Serial.print(" Fix: ");
+  Serial.print(fix);
+  Serial.print(" Quality: ");
+  Serial.print(quality);
+  Serial.print(" Lokalizacja: ");
+  Serial.println(lokalizacja);
+  Serial.print("Szybkosc (wezly): ");
+  Serial.print(szybkosc_wezly);
+  Serial.print(" Kat: ");
+  Serial.print(kat);
+  Serial.print(" Wysokosc: ");
+  Serial.print(wysokosc);
+  Serial.print(" Liczba satelit: ");
+  Serial.println(liczba_satelit);
+  Serial.print("Akcelerometr i zyroskop: ");
+  Serial.print(akcelerometr_zyroskop);
+  Serial.print(" PM1: ");
+  Serial.print(PM1);
+  Serial.print(" PM2.5: ");
+  Serial.print(PM25);
+  Serial.print(" PM10: ");
+  Serial.println(PM10);
+}
+
+void wysylanie(char czas[], double temperatura_, double cisnienie_, char lokalizacja[], double wysokosc_, char akcelerometr_zyroskop[])
+{
+  digitalWrite(pin_cs_nadajnik, LOW);
+  
+  char temperatura[10] = "         ";
+  int liczba_znakow_temperatura;
+  double_to_char(temperatura_, temperatura, liczba_znakow_temperatura, 2);
+
+  char cisnienie[10] = "         ";
+  int liczba_znakow_cisnienie;
+  double_to_char(cisnienie_, cisnienie, liczba_znakow_cisnienie, 2);
+
+  char wysokosc[10] = "         ";
+  int liczba_znakow_wysokosc;
+  double_to_char(wysokosc_, wysokosc, liczba_znakow_wysokosc, 2);
+
+  char gotowy_tekst[121] = "                                                                                                                        ";
+  //zawartosc komorki:  Z  :  z  z  z  z  z  z  z  z \n  T  :  t  t  t  t  t  t  t  t \n  C  :  c  c  c  c  c  c  c  c \n  L  :  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l  l \n  W  :  w  w  w  w  w  w  w  w \n  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a  a 
+  //numer komorki:      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 
+  
+  gotowy_tekst[0] = 'Z';
+  gotowy_tekst[1] = ':';
+  gotowy_tekst[10] = '\n';
+  gotowy_tekst[11] = 'T';
+  gotowy_tekst[12] = ':';
+  gotowy_tekst[21] = '\n';
+  gotowy_tekst[22] = 'C';
+  gotowy_tekst[23] = ':';
+  gotowy_tekst[32] = '\n';
+  gotowy_tekst[33] = 'L';
+  gotowy_tekst[34] = ':';
+  gotowy_tekst[58] = '\n';
+  gotowy_tekst[59] = 'W';
+  gotowy_tekst[60] = ':';
+  gotowy_tekst[69] = '\n';
+
+  for(int i=2; i<10; i++)
+  {
+    gotowy_tekst[i] = czas[i-2];
+  }
+  for(int i=13; i<21; i++)
+  {
+    gotowy_tekst[i] = temperatura[i-13];
+  }
+  for(int i=24; i<32; i++)
+  {
+    gotowy_tekst[i] = cisnienie[i-24];
+  }
+  for(int i=35; i<58; i++)
+  {
+    gotowy_tekst[i] = lokalizacja[i-35];
+  }
+  for(int i=61; i<69; i++)
+  {
+    gotowy_tekst[i] = wysokosc[i-61];
+  }
+  for(int i=70; i<120; i++)
+  {
+    gotowy_tekst[i] = akcelerometr_zyroskop[i-70];
+  }
+
+  Serial.print("Wysylanie gotowego tekstu: ");
+  Serial.println(gotowy_tekst);
+
+  rf95.send((uint8_t *)gotowy_tekst, 123);
+  poczatek = millis();
+  rf95.waitPacketSent();
+  koniec = millis();
+  Serial.print("Czas wykonania czakanie na wyslanie: ");
+  Serial.println(koniec-poczatek);
+  
+  digitalWrite(pin_cs_nadajnik, HIGH);
+}
+
+void setup() 
+{
+  Serial.begin(115200);
+  PMSSerial.begin(9600);
+
+  pinPeripheral(10, PIO_SERCOM);
+  pinPeripheral(11, PIO_SERCOM);
+
+  Wire.begin(); //zainicjowanie biblioteki wire
+  if(!imu.init())//zainicjowanie zyroskopu
+  {
+    znalezione_zyroskop = 0;
+  }
+  else
+  {
+    znalezione_zyroskop = 1;
+  }
+  imu.enableDefault(); //zainicjowanie zyroskopu
+
+  GPS.begin(9600);
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  GPS.sendCommand(PGCMD_ANTENNA);
+  delay(1000);
+  GPSSerial.println(PMTK_Q_RELEASE);
+
+  SPI.begin(); //inicjowanie komunikacji SPI
+
+  if (!bme.begin(0x76)) //sprawdzanie, czy BME280 został zainicjowany
+  {
+    Serial.println("Nie znaleziono czujnika BME280");
+    znalezione_BME280 = 0;
+  }
+  else
+  {
+    Serial.println("Znaleziono czujnik BME280");
+    znalezione_BME280 = 1;
+  }
+
+  
+  pinMode(pin_cs_nadajnik, OUTPUT);
+  digitalWrite(pin_cs_nadajnik, HIGH);
+
+  
+  pinMode(pin_cs_SD, OUTPUT);
+  digitalWrite(pin_cs_SD, LOW);
+
+  if(!SD.begin(pin_cs_SD))
+  {
+    Serial.println("Nie znaleziono karty SD");
+    znalezione_SD = 0;
+  }
+  else
+  {
+    Serial.println("Znaleziono karte SD");
+    znalezione_SD = 1;
+  }
+  digitalWrite(pin_cs_SD, HIGH);
+
+  //reset nadajnika
+  digitalWrite(pin_RST_nadajnik, LOW);
+  delay(10);
+  digitalWrite(pin_RST_nadajnik, HIGH);
+  delay(10);
+
+  if(!rf95.init()) 
+  {
+    Serial.println("Nie odnaleziono nadajnika!");
+    while (1);
+  }
+  else
+  {
+    Serial.println("Znaleziono nadajnik");
+  }
+  if(!rf95.setFrequency(czestotliwosc_nadajnika)) 
+  {
+    Serial.println("Nie mozna ustawic podanej czestotliwosci");
+    while (1);
+  }
+  else
+  {
+    Serial.print("Czestotliwosc ustawiona na: ");
+    Serial.println(czestotliwosc_nadajnika);
+  }
+  rf95.setTxPower(23, false);
+}
+
+void loop() 
+{
+  if (timer > millis()) //jesli cykl zegara millis() zacznie sie od poczatku
+  {
+    timer = millis();
+  }
+
+  odczytywanie_stale_gps();
+  
+  if (millis() - timer > 1000) 
+  {
+    poczatek_calkowity = millis();
+    timer = millis(); // reset the timer
+    
+    double temperatura_BME280 = 0;
+    double cisnienie = 0;
+    double wilgotnosc = 0;
+    double temperatura_DS18B20 = 0;
+    char czas[9] = "        ";
+    char data[11] = "          ";
+    int fix = 0;
+    int quality = 0;
+    char lokalizacja[24] = "                       ";
+    double szybkosc_wezly = 0;
+    double kat = 0;
+    double wysokosc = 0;
+    int liczba_satelit = 0;
+    char akcelerometr_zyroskop[51] = "                                                  ";
+    int PM1 = 0;
+    int PM25 = 0;
+    int PM10 = 0;
+    
+    poczatek = millis();
+    odczytywanie_gps(czas, data, fix, quality, lokalizacja, szybkosc_wezly, kat, wysokosc, liczba_satelit);
+    koniec = millis();
+    Serial.print("Czas wykonania GPS: ");
+    Serial.println(koniec-poczatek);
+
+    poczatek = millis();
+    if(znalezione_BME280 == 1)
+      odczytywanie_BME280(temperatura_BME280, cisnienie, wilgotnosc);
+    koniec = millis();
+    Serial.print("Czas wykonania BME280: ");
+    Serial.println(koniec-poczatek);
+
+    poczatek = millis();
+    odczytywanie_DS18B20(temperatura_DS18B20);
+    koniec = millis();
+    Serial.print("Czas wykonania DS18B20: ");
+    Serial.println(koniec-poczatek);
+
+    poczatek = millis();
+    if(znalezione_zyroskop == 1)
+    {
+      imu.read();
+      snprintf(akcelerometr_zyroskop, sizeof(akcelerometr_zyroskop), "A: %6d %6d %6d    G: %6d %6d %6d", imu.a.x, imu.a.y, imu.a.z, imu.g.x, imu.g.y, imu.g.z);
+    }
+    koniec = millis();
+    Serial.print("Czas wykonania zyroskop: ");
+    Serial.println(koniec-poczatek);
+
+    poczatek = millis();
+    odczytywanie_PMS7003(PM1, PM25, PM10);
+    koniec = millis();
+    Serial.print("Czas wykonania PMS7003: ");
+    Serial.println(koniec-poczatek);
+
+    poczatek = millis();
+    wyswietlanie(temperatura_BME280, cisnienie, wilgotnosc, temperatura_DS18B20, czas, data, fix, quality, lokalizacja, szybkosc_wezly, kat, wysokosc, liczba_satelit, akcelerometr_zyroskop, PM1, PM25, PM10);
+    koniec = millis();
+    Serial.print("Czas wykonania wyswietlanie: ");
+    Serial.println(koniec-poczatek);
+
+    poczatek = millis();
+    if(znalezione_SD == 1)
+      zapisywanie_SD(temperatura_BME280, cisnienie, wilgotnosc, temperatura_DS18B20, czas, data, fix, quality, lokalizacja, szybkosc_wezly, kat, wysokosc, liczba_satelit, akcelerometr_zyroskop, PM1, PM25, PM10);
+    koniec = millis();
+    Serial.print("Czas wykonania SD: ");
+    Serial.println(koniec-poczatek);
+
+    poczatek = millis();
+    wysylanie(czas, temperatura_DS18B20, cisnienie, lokalizacja, wysokosc, akcelerometr_zyroskop);
+    koniec = millis();
+    Serial.print("Czas wykonania wysylanie: ");
+    Serial.println(koniec-poczatek);
+    
+    koniec_calkowity = millis();
+    Serial.print("Czas wykonania programu: ");
+    Serial.println(koniec_calkowity-poczatek_calkowity);
+  }
+}
