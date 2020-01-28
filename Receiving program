@@ -8,7 +8,169 @@
 #define RF95_FREQ 433.1
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
- 
+
+int potega(int liczba, int potega)
+{
+    if(potega == 0)
+    {
+      return 1;
+    }
+    int liczba_poczatkowa = liczba;
+    for(int i = 1; i < potega; i++)
+    {
+        liczba_poczatkowa *= liczba;
+    }
+    return liczba_poczatkowa;
+}
+
+int char_100_to_cyfra(char znak)
+{
+    if(znak == 18)
+    {
+      return -1;
+    }
+    if(znak == 19)
+    {
+      return -1;
+    }
+    for(int i=20; i<120; i++)
+    {
+        if(znak == i)
+        {
+            return i-20;
+        }
+    }
+    return -1;
+}
+
+void char_100_to_int(char tekst[], int &liczba, int liczba_cyfr_100)
+{
+    liczba = 0;
+    int licznik = 0;
+    for(int i = potega(100, liczba_cyfr_100-1); i >= 1; i /= 100)
+    {
+        liczba += char_100_to_cyfra(tekst[licznik]) * i;
+        licznik++;
+    }
+}
+
+void rozszyfrowywanie_int(char gotowy_tekst[], int &nr_znaku, int &liczba)
+{
+  bool ujemna = 0;
+  if(gotowy_tekst[nr_znaku-1] == 19)
+  {
+    ujemna = 0;
+  }
+  else
+  {
+    ujemna = 1;
+  }
+  
+  int liczba_cyfr_100 = 0;
+  while(gotowy_tekst[nr_znaku] != 16 && gotowy_tekst[nr_znaku] != 17 && gotowy_tekst[nr_znaku] != 18 && gotowy_tekst[nr_znaku] != 19 && gotowy_tekst[nr_znaku] != '\0')
+  {
+    liczba_cyfr_100++;
+    nr_znaku++;
+  }
+  
+  char liczba_100[liczba_cyfr_100];
+  for(int i=0 ; i<liczba_cyfr_100; i++)
+  {
+    liczba_100[i] = gotowy_tekst[nr_znaku-liczba_cyfr_100+i];
+  }
+  char_100_to_int(liczba_100, liczba, liczba_cyfr_100);
+
+  if(ujemna == 1)
+  {
+    liczba *= -1;
+  }
+  
+  nr_znaku++;
+}
+
+void rozszyfrowywanie_double(char gotowy_tekst[], int &nr_znaku, double &liczba, int liczba_miejsc_po_przecinku)
+{
+  int liczba_int = 0;
+  rozszyfrowywanie_int(gotowy_tekst, nr_znaku, liczba_int);
+  liczba = liczba_int / double(potega(10, liczba_miejsc_po_przecinku));
+}
+
+void rozszyfrowywanie(char gotowy_tekst[], int godzina, int minuta, int sekunda, double temperatura_DS18B20, double cisnienie, double lokalizacja[], char lokalizacja_znak[], double wysokosc, double akcelerometr[], double zyroskop[], int spis_dzialajacych, double napiecie_baterii)
+{ 
+  int nr_znaku = 1;
+  int liczba = 0;
+
+  rozszyfrowywanie_int(gotowy_tekst, nr_znaku, godzina);
+  rozszyfrowywanie_int(gotowy_tekst, nr_znaku, minuta);
+  rozszyfrowywanie_int(gotowy_tekst, nr_znaku, sekunda);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_DS18B20, 2);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, cisnienie, 2);
+  if(gotowy_tekst[nr_znaku - 1] == 16)
+  {
+    lokalizacja_znak[0] = 'N';
+  }
+  else
+  {
+    lokalizacja_znak[0] = 'S';
+  }
+  gotowy_tekst[nr_znaku - 1] = 19;
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[0], 4);
+  if(gotowy_tekst[nr_znaku - 1] == 16)
+  {
+    lokalizacja_znak[1] = 'W';
+  }
+  else
+  {
+    lokalizacja_znak[1] = 'E';
+  }
+  gotowy_tekst[nr_znaku - 1] = 19;
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[1], 4);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wysokosc, 2);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[0], 2);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[1], 2);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[2], 2);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[0], 2);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[1], 2);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[2], 2);
+  rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych);
+  rozszyfrowywanie_double(gotowy_tekst, nr_znaku, napiecie_baterii, 2);
+  
+  Serial.print("Czas: ");
+  Serial.print(godzina);
+  Serial.print(":");
+  Serial.print(minuta);
+  Serial.print(":");
+  Serial.print(sekunda);
+  Serial.print(" Temperatura_DS18B20: ");
+  Serial.print(temperatura_DS18B20);
+  Serial.print(" Cisnienie: ");
+  Serial.print(cisnienie);
+  Serial.print(" Lokalizacja: ");
+  Serial.print(lokalizacja[0]);
+  Serial.print(lokalizacja_znak[0]);
+  Serial.print(" ");
+  Serial.print(lokalizacja[1]);
+  Serial.println(lokalizacja_znak[1]);
+  Serial.print("Wysokosc: ");
+  Serial.print(wysokosc);
+  Serial.print(" Akcelerometr: ");
+  Serial.print(akcelerometr[0]);
+  Serial.print(" ");
+  Serial.print(akcelerometr[1]);
+  Serial.print(" ");
+  Serial.print(akcelerometr[2]);
+  Serial.print(" Zyroskop: ");
+  Serial.print(zyroskop[0]);
+  Serial.print(" ");
+  Serial.print(zyroskop[1]);
+  Serial.print(" ");
+  Serial.print(zyroskop[2]);
+  Serial.print(" Spis_dzialajacych: ");
+  Serial.print(spis_dzialajacych);
+  Serial.print(" Napiecie baterii: ");
+  Serial.println(napiecie_baterii);
+}
+
 void setup()
 {
   pinMode(RFM95_RST, OUTPUT);
@@ -42,6 +204,19 @@ void setup()
  
 void loop()
 {
+  int godzina = 0;
+  int minuta = 0;
+  int sekunda = 0;
+  double temperatura_DS18B20 = 0;
+  double cisnienie = 0;
+  double lokalizacja[2] = {0, 0};
+  char lokalizacja_znak[2] = {' ', ' '};
+  double wysokosc = 0;
+  double akcelerometr[3] = {0, 0, 0};
+  double zyroskop[3] = {0, 0, 0};
+  int spis_dzialajacych = 0;
+  double napiecie_baterii = 0;
+  
   if (rf95.available())
   {
     uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
@@ -49,10 +224,8 @@ void loop()
  
     if (rf95.recv(buf, &len))
     {
-      RH_RF95::printBuffer("Received: ", buf, len);
-      Serial.print("Got: ");
-      Serial.println((char*)buf);
-       Serial.print("RSSI: ");
+      rozszyfrowywanie((char*)buf, godzina, minuta, sekunda, temperatura_DS18B20, cisnienie, lokalizacja, lokalizacja_znak, wysokosc, akcelerometr, zyroskop, spis_dzialajacych, napiecie_baterii);
+      Serial.print("RSSI: ");
       Serial.println(rf95.lastRssi());
     }
     else
