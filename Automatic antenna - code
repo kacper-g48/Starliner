@@ -1,62 +1,28 @@
 #include <math.h>
 
-int char_na_cyfre(char znak)
+void zamiana_lokalizacja_na_dziesietna(double lokalizacja[], double &szerokosc_dziesietna, double &dlugosc_dziesietna)
 {
-    char cyfry[10] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    int stopnie[2];
+    stopnie[0] = lokalizacja[0]/100;
+    stopnie[1] = lokalizacja[1]/100;
 
-    for(int i=0; i<10; i++)
-    {
-        if(znak == cyfry[i])
-        {
-            return i;
-        }
-    }
-    return 0;
-}
+    lokalizacja[0] -= stopnie[0]*100;
+    lokalizacja[1] -= stopnie[1]*100;
 
-void char_to_double_gps(char tekst[], int &szerokosc_stopnie, double &szerokosc_minuty, char &szerokosc_znak, int &dlugosc_stopnie, double &dlugosc_minuty, char &dlugosc_znak)
-{
-    szerokosc_stopnie += char_na_cyfre(tekst[0])*100;
-    szerokosc_stopnie += char_na_cyfre(tekst[1])*10;
-    szerokosc_stopnie += char_na_cyfre(tekst[2]);
-    szerokosc_minuty += double(char_na_cyfre(tekst[3]))*10;
-    szerokosc_minuty += double(char_na_cyfre(tekst[4]));
-    szerokosc_minuty += double(char_na_cyfre(tekst[6]))*0.1;
-    szerokosc_minuty += double(char_na_cyfre(tekst[7]))*0.01;
-    szerokosc_minuty += double(char_na_cyfre(tekst[8]))*0.001;
-    szerokosc_minuty += double(char_na_cyfre(tekst[9]))*0.0001;
-    szerokosc_znak = tekst[10];
-
-    dlugosc_stopnie += char_na_cyfre(tekst[12])*100;
-    dlugosc_stopnie += char_na_cyfre(tekst[13])*10;
-    dlugosc_stopnie += char_na_cyfre(tekst[14]);
-    dlugosc_minuty += double(char_na_cyfre(tekst[15]))*10;
-    dlugosc_minuty += double(char_na_cyfre(tekst[16]));
-    dlugosc_minuty += double(char_na_cyfre(tekst[18]))*0.1;
-    dlugosc_minuty += double(char_na_cyfre(tekst[19]))*0.01;
-    dlugosc_minuty += double(char_na_cyfre(tekst[20]))*0.001;
-    dlugosc_minuty += double(char_na_cyfre(tekst[21]))*0.0001;
-    dlugosc_znak = tekst[22];
-}
-
-void zamiana_char_na_szerokosc_dlugosc_dziesietna(char lokalizacja[], double &szerokosc_dziesietna, double &dlugosc_dziesietna)
-{
-    int szerokosc_stopnie = 0;
-    double szerokosc_minuty = 0;
-    char szerokosc_znak;
-    int dlugosc_stopnie = 0;
-    double dlugosc_minuty = 0;
-    char dlugosc_znak;
-
-    char_to_double_gps(lokalizacja, szerokosc_stopnie, szerokosc_minuty, szerokosc_znak, dlugosc_stopnie, dlugosc_minuty, dlugosc_znak);
-
-    szerokosc_dziesietna = double(szerokosc_stopnie) + szerokosc_minuty/60;
-    dlugosc_dziesietna = double(dlugosc_stopnie) + dlugosc_minuty/60;
+    szerokosc_dziesietna = stopnie[0] + lokalizacja[0]/60;
+    dlugosc_dziesietna = stopnie[1] + lokalizacja[1]/60;
 }
 
 void obliczanie_kata_obrot(double roznica_szerokosc, double roznica_dlugosc, double &kat_obrot)
 {
-    kat_obrot = (atan(fabs(roznica_szerokosc/roznica_dlugosc)))*180/M_PI;
+    if(roznica_dlugosc != 0)
+    {
+        kat_obrot = (atan(fabs(roznica_szerokosc/roznica_dlugosc)))*180/M_PI;
+    }
+    else
+    {
+        kat_obrot = 90;
+    }
 
     if(roznica_dlugosc<=0 && roznica_szerokosc>=0)
     {
@@ -70,30 +36,56 @@ void obliczanie_kata_obrot(double roznica_szerokosc, double roznica_dlugosc, dou
     {
         kat_obrot = 360 - kat_obrot;
     }
+
+}
+
+void ograniczenia_kat_wysokosc(double &kat_wysokosc)
+{
+    if(kat_wysokosc > 70)
+    {
+        kat_wysokosc = 70;
+    }
+    if(kat_wysokosc < 0)
+    {
+        kat_wysokosc = 0;
+    }
 }
 
 void obliczanie_kata_wysokosc(double roznica_wysokosc, double odleglosc_prosta, double &kat_wysokosc)
 {
-    kat_wysokosc = (atan(fabs(roznica_wysokosc/odleglosc_prosta)))*180/M_PI;
+    if(odleglosc_prosta != 0)
+    {
+        kat_wysokosc = (atan(fabs(roznica_wysokosc/odleglosc_prosta)))*180/M_PI;
+    }
+    else
+    {
+        kat_wysokosc = 90;
+    }
+
+    if(roznica_wysokosc < 0)
+    {
+        kat_wysokosc *= -1;
+    }
+
 }
 
-void obliczanie_odleglosci(char lokalizacja_poczatkowa[], double wysokosc_poczatkowa, char lokalizacja_cansata[], double wysokosc_cansata, double &odleglosc_prosta, double &odleglosc_calkowita, double &kat_obrot, double &kat_wysokosc)
+void obliczanie_odleglosci(double lokalizacja_stacji[], double wysokosc_stacji, double lokalizacja_cansata[], double wysokosc_cansata, double &odleglosc_prosta, double &odleglosc_calkowita, double &kat_obrot, double &kat_wysokosc)
 {
-    double szerokosc_dziesietna_poczatkowa = 0;
-    double dlugosc_dziesietna_poczatkowa = 0;
+    double szerokosc_dziesietna_stacji = 0;
+    double dlugosc_dziesietna_stacji = 0;
 
     double szerokosc_dziesietna_cansata = 0;
     double dlugosc_dziesietna_cansata = 0;
 
-    zamiana_char_na_szerokosc_dlugosc_dziesietna(lokalizacja_poczatkowa, szerokosc_dziesietna_poczatkowa, dlugosc_dziesietna_poczatkowa);
-    zamiana_char_na_szerokosc_dlugosc_dziesietna(lokalizacja_cansata, szerokosc_dziesietna_cansata, dlugosc_dziesietna_cansata);
+    zamiana_lokalizacja_na_dziesietna(lokalizacja_stacji, szerokosc_dziesietna_stacji, dlugosc_dziesietna_stacji);
+    zamiana_lokalizacja_na_dziesietna(lokalizacja_cansata, szerokosc_dziesietna_cansata, dlugosc_dziesietna_cansata);
 
     double roznica_szerokosc_1_stopien_metry = 2*M_PI*6371000/360;
-    double roznica_dlugosc_1_stopien_metry = 2*M_PI*6371000/360*cos(szerokosc_dziesietna_poczatkowa*2*M_PI/360);
+    double roznica_dlugosc_1_stopien_metry = 2*M_PI*6371000/360*cos(szerokosc_dziesietna_stacji*2*M_PI/360);
 
-    double roznica_szerokosc = (szerokosc_dziesietna_cansata - szerokosc_dziesietna_poczatkowa)*roznica_szerokosc_1_stopien_metry;
-    double roznica_dlugosc = (dlugosc_dziesietna_cansata - dlugosc_dziesietna_poczatkowa)*roznica_dlugosc_1_stopien_metry;
-    double roznica_wysokosc = wysokosc_cansata - wysokosc_poczatkowa;
+    double roznica_szerokosc = (szerokosc_dziesietna_cansata - szerokosc_dziesietna_stacji)*roznica_szerokosc_1_stopien_metry;
+    double roznica_dlugosc = (dlugosc_dziesietna_cansata - dlugosc_dziesietna_stacji)*roznica_dlugosc_1_stopien_metry;
+    double roznica_wysokosc = wysokosc_cansata - wysokosc_stacji;
 
     odleglosc_prosta = sqrt(roznica_szerokosc*roznica_szerokosc + roznica_dlugosc*roznica_dlugosc);
 
@@ -102,8 +94,9 @@ void obliczanie_odleglosci(char lokalizacja_poczatkowa[], double wysokosc_poczat
     obliczanie_kata_obrot(roznica_szerokosc, roznica_dlugosc, kat_obrot);
 
     obliczanie_kata_wysokosc(roznica_wysokosc, odleglosc_prosta, kat_wysokosc);
-
+    ograniczenia_kat_wysokosc(kat_wysokosc);
 }
+
 
 void setup() 
 {
@@ -113,9 +106,9 @@ void setup()
 
 void loop() 
 {
-  char lokalizacja_poczatkowa[24] = " 5100.0000N, 1700.0000E";
-  double wysokosc_poczatkowa = 100;
-  char lokalizacja_cansata[24] = " 5200.0000N, 1800.0000E";
+  double lokalizacja_stacji[2] = {5512.3455, 7574.4567};
+  double wysokosc_stacji = 100;
+  double lokalizacja_cansata[2] = {5712.3456, 7534.4567};
   double wysokosc_cansata = 4000;
 
   double odleglosc_prosta = 0;
@@ -123,7 +116,7 @@ void loop()
   double kat_obrot = 0;
   double kat_wysokosc = 0;
 
-  obliczanie_odleglosci(lokalizacja_poczatkowa, wysokosc_poczatkowa, lokalizacja_cansata, wysokosc_cansata, odleglosc_prosta, odleglosc_calkowita, kat_obrot, kat_wysokosc);
+  obliczanie_odleglosci(lokalizacja_stacji, wysokosc_stacji, lokalizacja_cansata, wysokosc_cansata, odleglosc_prosta, odleglosc_calkowita, kat_obrot, kat_wysokosc);
 
   Serial.print("ODLEGLOSC PROSTA: ");
   Serial.println(odleglosc_prosta);
