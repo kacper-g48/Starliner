@@ -231,11 +231,25 @@ void int_to_char_100(int liczba, char tekst[], int &liczba_cyfr_100)
     tekst[licznik] = '\0';
 }
 
+void zaokraglij(int &liczba)
+{
+  if(liczba%10 < 5)
+  {
+    return;
+  }
+  else
+  {
+    liczba += 10;
+  }
+}
+
 void double_to_char_100(double liczba, char tekst[], int liczba_miejsc_po_przecinku, int &liczba_cyfr_100)
 {
-    liczba *= potega(10, liczba_miejsc_po_przecinku);
+    liczba *= potega(10, liczba_miejsc_po_przecinku+1);
     int liczba_int = liczba;
-    int_to_char_100(liczba, tekst, liczba_cyfr_100);
+    zaokraglij(liczba_int);
+    liczba_int /= 10;
+    int_to_char_100(liczba_int, tekst, liczba_cyfr_100);
 }
 
 void dopisywanie_gotowy_tekst(char gotowy_tekst[], char tekst[], int liczba_cyfr_100, int &nr_znaku, int ujemna)
@@ -320,11 +334,11 @@ void zapisywanie_SD(double temperatura_BME280, double cisnienie, double wilgotno
     plik.print(".");
     plik.print(rok);
     plik.print(";");
-    plik.print(lokalizacja[0]);
+    plik.print(lokalizacja[0], 4);
     plik.print(";");
     plik.print(lokalizacja_znak[0]);
     plik.print(";");
-    plik.print(lokalizacja[1]);
+    plik.print(lokalizacja[1], 4);
     plik.print(";");
     plik.print(lokalizacja_znak[1]);
     plik.print(";");
@@ -615,10 +629,10 @@ void wyswietlanie(double temperatura_BME280, double cisnienie, double wilgotnosc
   Serial.print(" Quality: ");
   Serial.print(quality);
   Serial.print(" Lokalizacja: ");
-  Serial.print(lokalizacja[0]);
+  Serial.print(lokalizacja[0], 4);
   Serial.print(lokalizacja_znak[0]);
   Serial.print(" ");
-  Serial.print(lokalizacja[1]);
+  Serial.print(lokalizacja[1], 4);
   Serial.println(lokalizacja_znak[1]);
   Serial.print("Szybkosc (wezly): ");
   Serial.print(szybkosc_wezly);
@@ -863,15 +877,12 @@ void setup()
 
 void loop()
 {
-  if (timer > millis()) //jesli cykl zegara millis() zacznie sie od poczatku
-  {
-    timer = millis();
-  }
-
   odczytywanie_stale_gps();
 
   if (millis() - timer > 1000)
   {
+    digitalWrite(13, HIGH);
+    
     poczatek_calkowity = millis();
     timer = millis(); // reset the timer
 
@@ -946,7 +957,10 @@ void loop()
     Serial.println(koniec - poczatek);
 
     poczatek = millis();
-    zapisywanie_SD(temperatura_BME280, cisnienie, wilgotnosc, temperatura_DS18B20, godzina, minuta, sekunda, dzien, miesiac, rok, lokalizacja, lokalizacja_znak, szybkosc_wezly, kat, wysokosc, liczba_satelit, akcelerometr, zyroskop, magnetometr, temperatura_altimu, cisnienie_altimu, PM1, PM25, PM10, spis_dzialajacych, napiecie_baterii);
+    if(znalezione_SD == 1)
+    {
+      zapisywanie_SD(temperatura_BME280, cisnienie, wilgotnosc, temperatura_DS18B20, godzina, minuta, sekunda, dzien, miesiac, rok, lokalizacja, lokalizacja_znak, szybkosc_wezly, kat, wysokosc, liczba_satelit, akcelerometr, zyroskop, magnetometr, temperatura_altimu, cisnienie_altimu, PM1, PM25, PM10, spis_dzialajacych, napiecie_baterii);
+    }
     koniec = millis();
     Serial.print("Czas wykonania SD: ");
     Serial.println(koniec - poczatek);
@@ -963,5 +977,7 @@ void loop()
     koniec_calkowity = millis();
     Serial.print("Czas wykonania programu: ");
     Serial.println(koniec_calkowity - poczatek_calkowity);
+
+    digitalWrite(13, LOW);
   }
 }
