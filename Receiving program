@@ -1,6 +1,8 @@
 #include <SPI.h>
 #include <RH_RF95.h>
 
+#include <math.h>
+
 #define RFM95_CS 8
 #define RFM95_RST 4
 #define RFM95_INT 3
@@ -9,55 +11,241 @@
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
+int pin_poziom_kierunek = 19; //dir
+int pin_poziom_kroki = 18;
+int pin_wysokosc_kierunek = 17; //dir
+int pin_wysokosc_kroki = 16;
+
+double kat_obrot_stary = 0;
+double kat_wysokosc_stary = 0;
+
+void obrot_poziom(double kat)
+{
+  int liczba_krokow = kat * 3;
+  if (liczba_krokow > 0)
+  {
+    digitalWrite(pin_poziom_kierunek, HIGH);
+    for (int i = 0; i < liczba_krokow; i++)
+    {
+      digitalWrite(pin_poziom_kroki, HIGH);
+      delayMicroseconds(2000);
+      digitalWrite(pin_poziom_kroki, LOW);
+      delayMicroseconds(2000);
+    }
+  }
+  else
+  {
+    liczba_krokow *= -1;
+    digitalWrite(pin_poziom_kierunek, LOW);
+    for (int i = 0; i < liczba_krokow; i++)
+    {
+      digitalWrite(pin_poziom_kroki, HIGH);
+      delayMicroseconds(2000);
+      digitalWrite(pin_poziom_kroki, LOW);
+      delayMicroseconds(2000);
+    }
+  }
+}
+
+void obrot_wysokosc(double kat)
+{
+  int liczba_krokow = kat * 3;
+  if (liczba_krokow > 0)
+  {
+    digitalWrite(pin_wysokosc_kierunek, HIGH);
+    for (int i = 0; i < liczba_krokow; i++)
+    {
+      digitalWrite(pin_wysokosc_kroki, HIGH);
+      delayMicroseconds(2000);
+      digitalWrite(pin_wysokosc_kroki, LOW);
+      delayMicroseconds(2000);
+    }
+  }
+  else
+  {
+    liczba_krokow *= -1;
+    digitalWrite(pin_wysokosc_kierunek, LOW);
+    for (int i = 0; i < liczba_krokow; i++)
+    {
+      digitalWrite(pin_wysokosc_kroki, HIGH);
+      delayMicroseconds(2000);
+      digitalWrite(pin_wysokosc_kroki, LOW);
+      delayMicroseconds(2000);
+    }
+  }
+}
+
+void zamiana_lokalizacja_na_dziesietna(double lokalizacja[], double &szerokosc_dziesietna, double &dlugosc_dziesietna)
+{
+  int stopnie[2];
+  stopnie[0] = lokalizacja[0] / 100;
+  stopnie[1] = lokalizacja[1] / 100;
+
+  lokalizacja[0] -= stopnie[0] * 100;
+  lokalizacja[1] -= stopnie[1] * 100;
+
+  szerokosc_dziesietna = stopnie[0] + lokalizacja[0] / 60;
+  dlugosc_dziesietna = stopnie[1] + lokalizacja[1] / 60;
+}
+
+void obliczanie_kata_obrot(double roznica_szerokosc, double roznica_dlugosc, double &kat_obrot)
+{
+  if (roznica_dlugosc != 0)
+  {
+    kat_obrot = (atan(fabs(roznica_szerokosc / roznica_dlugosc))) * 180 / M_PI;
+  }
+  else
+  {
+    kat_obrot = 90;
+  }
+
+  if (roznica_dlugosc <= 0 && roznica_szerokosc >= 0)
+  {
+    kat_obrot = 180 - kat_obrot;
+  }
+  else if (roznica_dlugosc <= 0 && roznica_szerokosc <= 0)
+  {
+    kat_obrot = 180 + kat_obrot;
+  }
+  else if (roznica_dlugosc >= 0 && roznica_szerokosc <= 0)
+  {
+    kat_obrot = 360 - kat_obrot;
+  }
+
+}
+
+void ograniczenia_kat_wysokosc(double &kat_wysokosc)
+{
+  if (kat_wysokosc > 70)
+  {
+    kat_wysokosc = 70;
+  }
+  if (kat_wysokosc < 0)
+  {
+    kat_wysokosc = 0;
+  }
+}
+
+void obliczanie_kata_wysokosc(double roznica_wysokosc, double odleglosc_prosta, double &kat_wysokosc)
+{
+  if (odleglosc_prosta != 0)
+  {
+    kat_wysokosc = (atan(fabs(roznica_wysokosc / odleglosc_prosta))) * 180 / M_PI;
+  }
+  else
+  {
+    kat_wysokosc = 90;
+  }
+
+  if (roznica_wysokosc < 0)
+  {
+    kat_wysokosc *= -1;
+  }
+
+}
+
+void obliczanie_odleglosci(double lokalizacja_stacji[], double wysokosc_stacji, double lokalizacja_cansata[], double wysokosc_cansata, double &odleglosc_prosta, double &odleglosc_calkowita, double &kat_obrot, double &kat_wysokosc)
+{
+  double szerokosc_dziesietna_stacji = 0;
+  double dlugosc_dziesietna_stacji = 0;
+
+  double szerokosc_dziesietna_cansata = 0;
+  double dlugosc_dziesietna_cansata = 0;
+
+  zamiana_lokalizacja_na_dziesietna(lokalizacja_stacji, szerokosc_dziesietna_stacji, dlugosc_dziesietna_stacji);
+  zamiana_lokalizacja_na_dziesietna(lokalizacja_cansata, szerokosc_dziesietna_cansata, dlugosc_dziesietna_cansata);
+
+  double roznica_szerokosc_1_stopien_metry = 2 * M_PI * 6371000 / 360;
+  double roznica_dlugosc_1_stopien_metry = 2 * M_PI * 6371000 / 360 * cos(szerokosc_dziesietna_stacji * 2 * M_PI / 360);
+
+  double roznica_szerokosc = (szerokosc_dziesietna_cansata - szerokosc_dziesietna_stacji) * roznica_szerokosc_1_stopien_metry;
+  double roznica_dlugosc = (dlugosc_dziesietna_cansata - dlugosc_dziesietna_stacji) * roznica_dlugosc_1_stopien_metry;
+  double roznica_wysokosc = wysokosc_cansata - wysokosc_stacji;
+
+  odleglosc_prosta = sqrt(roznica_szerokosc * roznica_szerokosc + roznica_dlugosc * roznica_dlugosc);
+
+  odleglosc_calkowita = sqrt(odleglosc_prosta * odleglosc_prosta + roznica_wysokosc * roznica_wysokosc);
+
+  obliczanie_kata_obrot(roznica_szerokosc, roznica_dlugosc, kat_obrot);
+
+  obliczanie_kata_wysokosc(roznica_wysokosc, odleglosc_prosta, kat_wysokosc);
+  ograniczenia_kat_wysokosc(kat_wysokosc);
+}
+
+void obracanie_anteny(double lokalizacja_cansata[2], double wysokosc_cansata)
+{
+  double lokalizacja_stacji[2] = {5512.3455, 7574.4567};
+  double wysokosc_stacji = 100;
+
+  double odleglosc_prosta = 0;
+  double odleglosc_calkowita = 0;
+  double kat_obrot = 0;
+  double kat_wysokosc = 0;
+
+  obliczanie_odleglosci(lokalizacja_stacji, wysokosc_stacji, lokalizacja_cansata, wysokosc_cansata, odleglosc_prosta, odleglosc_calkowita, kat_obrot, kat_wysokosc);
+
+  Serial.print("ODLEGLOSC PROSTA: ");
+  Serial.println(odleglosc_prosta);
+  Serial.print("ODLEGLOSC CALKOWITA: ");
+  Serial.println(odleglosc_calkowita);
+  Serial.print("KAT OBROT: ");
+  Serial.println(kat_obrot);
+  Serial.print("KAT WYSOKOSC: ");
+  Serial.println(kat_wysokosc);
+
+  obrot_poziom(kat_obrot - kat_obrot_stary);
+  obrot_wysokosc(kat_wysokosc - kat_wysokosc_stary);
+}
+
 int potega(int liczba, int potega)
 {
-    if(potega == 0)
-    {
-      return 1;
-    }
-    int liczba_poczatkowa = liczba;
-    for(int i = 1; i < potega; i++)
-    {
-        liczba_poczatkowa *= liczba;
-    }
-    return liczba_poczatkowa;
+  if (potega == 0)
+  {
+    return 1;
+  }
+  int liczba_poczatkowa = liczba;
+  for (int i = 1; i < potega; i++)
+  {
+    liczba_poczatkowa *= liczba;
+  }
+  return liczba_poczatkowa;
 }
 
 int char_100_to_cyfra(char znak)
 {
-    if(znak == 18)
-    {
-      return -1;
-    }
-    if(znak == 19)
-    {
-      return -1;
-    }
-    for(int i=20; i<120; i++)
-    {
-        if(znak == i)
-        {
-            return i-20;
-        }
-    }
+  if (znak == 18)
+  {
     return -1;
+  }
+  if (znak == 19)
+  {
+    return -1;
+  }
+  for (int i = 20; i < 120; i++)
+  {
+    if (znak == i)
+    {
+      return i - 20;
+    }
+  }
+  return -1;
 }
 
 void char_100_to_int(char tekst[], int &liczba, int liczba_cyfr_100)
 {
-    liczba = 0;
-    int licznik = 0;
-    for(int i = potega(100, liczba_cyfr_100-1); i >= 1; i /= 100)
-    {
-        liczba += char_100_to_cyfra(tekst[licznik]) * i;
-        licznik++;
-    }
+  liczba = 0;
+  int licznik = 0;
+  for (int i = potega(100, liczba_cyfr_100 - 1); i >= 1; i /= 100)
+  {
+    liczba += char_100_to_cyfra(tekst[licznik]) * i;
+    licznik++;
+  }
 }
 
 void rozszyfrowywanie_int(char gotowy_tekst[], int &nr_znaku, int &liczba)
 {
   bool ujemna = 0;
-  if(gotowy_tekst[nr_znaku-1] == 19)
+  if (gotowy_tekst[nr_znaku - 1] == 19)
   {
     ujemna = 0;
   }
@@ -65,26 +253,26 @@ void rozszyfrowywanie_int(char gotowy_tekst[], int &nr_znaku, int &liczba)
   {
     ujemna = 1;
   }
-  
+
   int liczba_cyfr_100 = 0;
-  while(gotowy_tekst[nr_znaku] != 16 && gotowy_tekst[nr_znaku] != 17 && gotowy_tekst[nr_znaku] != 18 && gotowy_tekst[nr_znaku] != 19 && gotowy_tekst[nr_znaku] != '\0')
+  while (gotowy_tekst[nr_znaku] != 16 && gotowy_tekst[nr_znaku] != 17 && gotowy_tekst[nr_znaku] != 18 && gotowy_tekst[nr_znaku] != 19 && gotowy_tekst[nr_znaku] != '\0')
   {
     liczba_cyfr_100++;
     nr_znaku++;
   }
-  
+
   char liczba_100[liczba_cyfr_100];
-  for(int i=0 ; i<liczba_cyfr_100; i++)
+  for (int i = 0 ; i < liczba_cyfr_100; i++)
   {
-    liczba_100[i] = gotowy_tekst[nr_znaku-liczba_cyfr_100+i];
+    liczba_100[i] = gotowy_tekst[nr_znaku - liczba_cyfr_100 + i];
   }
   char_100_to_int(liczba_100, liczba, liczba_cyfr_100);
 
-  if(ujemna == 1)
+  if (ujemna == 1)
   {
     liczba *= -1;
   }
-  
+
   nr_znaku++;
 }
 
@@ -96,7 +284,7 @@ void rozszyfrowywanie_double(char gotowy_tekst[], int &nr_znaku, double &liczba,
 }
 
 void rozszyfrowywanie(char gotowy_tekst[], int godzina, int minuta, int sekunda, double temperatura_DS18B20, double cisnienie, double lokalizacja[], char lokalizacja_znak[], double wysokosc, double akcelerometr[], double zyroskop[], int spis_dzialajacych, double napiecie_baterii)
-{ 
+{
   int nr_znaku = 1;
   int liczba = 0;
 
@@ -105,7 +293,7 @@ void rozszyfrowywanie(char gotowy_tekst[], int godzina, int minuta, int sekunda,
   rozszyfrowywanie_int(gotowy_tekst, nr_znaku, sekunda);
   rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_DS18B20, 2);
   rozszyfrowywanie_double(gotowy_tekst, nr_znaku, cisnienie, 2);
-  if(gotowy_tekst[nr_znaku - 1] == 16)
+  if (gotowy_tekst[nr_znaku - 1] == 16)
   {
     lokalizacja_znak[0] = 'N';
   }
@@ -115,7 +303,7 @@ void rozszyfrowywanie(char gotowy_tekst[], int godzina, int minuta, int sekunda,
   }
   gotowy_tekst[nr_znaku - 1] = 19;
   rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[0], 4);
-  if(gotowy_tekst[nr_znaku - 1] == 16)
+  if (gotowy_tekst[nr_znaku - 1] == 16)
   {
     lokalizacja_znak[1] = 'W';
   }
@@ -134,7 +322,7 @@ void rozszyfrowywanie(char gotowy_tekst[], int godzina, int minuta, int sekunda,
   rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[2], 2);
   rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych);
   rozszyfrowywanie_double(gotowy_tekst, nr_znaku, napiecie_baterii, 2);
-  
+
   Serial.print("Czas: ");
   Serial.print(godzina);
   Serial.print(":");
@@ -146,10 +334,10 @@ void rozszyfrowywanie(char gotowy_tekst[], int godzina, int minuta, int sekunda,
   Serial.print(" Cisnienie: ");
   Serial.print(cisnienie);
   Serial.print(" Lokalizacja: ");
-  Serial.print(lokalizacja[0]);
+  Serial.print(lokalizacja[0], 4);
   Serial.print(lokalizacja_znak[0]);
   Serial.print(" ");
-  Serial.print(lokalizacja[1]);
+  Serial.print(lokalizacja[1], 4);
   Serial.println(lokalizacja_znak[1]);
   Serial.print("Wysokosc: ");
   Serial.print(wysokosc);
@@ -175,58 +363,67 @@ void setup()
 {
   pinMode(RFM95_RST, OUTPUT);
   digitalWrite(RFM95_RST, HIGH);
- 
+
   Serial.begin(115200);
- 
+
   digitalWrite(RFM95_RST, LOW);
   delay(10);
   digitalWrite(RFM95_RST, HIGH);
   delay(10);
- 
-  while (!rf95.init()) 
+
+  while (!rf95.init())
   {
     Serial.println("LoRa radio init failed");
     Serial.println("Uncomment '#define SERIAL_DEBUG' in RH_RF95.cpp for detailed debug info");
     while (1);
   }
   Serial.println("LoRa radio init OK!");
- 
 
-  if (!rf95.setFrequency(RF95_FREQ)) 
+
+  if (!rf95.setFrequency(RF95_FREQ))
   {
     Serial.println("setFrequency failed");
     while (1);
   }
   Serial.print("Set Freq to: "); Serial.println(RF95_FREQ);
- 
+
   rf95.setTxPower(23, false);
 }
- 
+
 void loop()
 {
-  int godzina = 0;
-  int minuta = 0;
-  int sekunda = 0;
-  double temperatura_DS18B20 = 0;
-  double cisnienie = 0;
-  double lokalizacja[2] = {0, 0};
-  char lokalizacja_znak[2] = {' ', ' '};
-  double wysokosc = 0;
-  double akcelerometr[3] = {0, 0, 0};
-  double zyroskop[3] = {0, 0, 0};
-  int spis_dzialajacych = 0;
-  double napiecie_baterii = 0;
-  
+
+
   if (rf95.available())
   {
     uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
     uint8_t len = sizeof(buf);
- 
+
     if (rf95.recv(buf, &len))
     {
+      digitalWrite(13, HIGH);
+
+      int godzina = 0;
+      int minuta = 0;
+      int sekunda = 0;
+      double temperatura_DS18B20 = 0;
+      double cisnienie = 0;
+      double lokalizacja[2] = {0, 0};
+      char lokalizacja_znak[2] = {' ', ' '};
+      double wysokosc = 0;
+      double akcelerometr[3] = {0, 0, 0};
+      double zyroskop[3] = {0, 0, 0};
+      int spis_dzialajacych = 0;
+      double napiecie_baterii = 0;
+
       rozszyfrowywanie((char*)buf, godzina, minuta, sekunda, temperatura_DS18B20, cisnienie, lokalizacja, lokalizacja_znak, wysokosc, akcelerometr, zyroskop, spis_dzialajacych, napiecie_baterii);
+
       Serial.print("RSSI: ");
       Serial.println(rf95.lastRssi());
+
+      obracanie_anteny(lokalizacja, wysokosc);
+
+      digitalWrite(13, LOW);
     }
     else
     {
