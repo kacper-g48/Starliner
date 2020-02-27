@@ -40,15 +40,15 @@ File plik;//zainicjowanie zmiennej pliku tekstowego
 
 uint32_t timer = millis();//utworzenie stopera do odmierzania czasu pomiedzy pomiarami
 
-bool znalezione_SD = 0;//gotowe
-bool znalezione_BME280 = 0;//gotowe
-bool znalezione_DS18B20 = 0;//gotowe
-bool znalezione_PMS = 0;//gotowe
-bool znalezione_GPS = 0;//gotowe
-bool znalezione_altimu_zyro_akce = 0;//gotowe
-bool znalezione_altimu_magnetometr = 0;//gotowe
-bool znalezione_altimu_temp_cisn = 0;//gotowe
-bool znalezione_nadajnik = 0;//gotowe
+bool znalezione_SD = 0;
+bool znalezione_BME280 = 0;
+bool znalezione_DS18B20 = 0;
+bool znalezione_PMS = 0;
+bool znalezione_GPS = 0;
+bool znalezione_altimu_zyro_akce = 0;
+bool znalezione_altimu_magnetometr = 0;
+bool znalezione_altimu_temp_cisn = 0;
+bool znalezione_nadajnik = 0;
 
 int pin_cs_nadajnik = 8;
 int pin_RST_nadajnik = 4;
@@ -293,10 +293,9 @@ void mierzenie_napiecia_baterii(double &napiecie_baterii)
   napiecie_baterii = analogRead(A7) * 6.6 / 1024;
 }
 
-void odczytywanie_BME280(double &temperatura, double &cisnienie, double &wilgotnosc)
+void odczytywanie_BME280(double &temperatura, double &cisnienie_BME280, double &wilgotnosc)
 {
-  float temperatura1, cisnienie1, wilgotnosc1;
-  if(bme.read(temperatura, cisnienie, wilgotnosc) == 0)
+  if(bme.read(temperatura, cisnienie_BME280, wilgotnosc) == 0)
   {
     znalezione_BME280 = 1;
   }
@@ -306,7 +305,7 @@ void odczytywanie_BME280(double &temperatura, double &cisnienie, double &wilgotn
   }
 }
 
-void zapisywanie_SD(double temperatura_BME280, double cisnienie, double wilgotnosc, double temperatura_DS18B20, int godzina, int minuta, int sekunda, int dzien, int miesiac, int rok, double lokalizacja[], char lokalizacja_znak[], double szybkosc_wezly, double kat, double wysokosc, int liczba_satelit, double akcelerometr[], double zyroskop[], double magnetometr[], double temperatura_altimu, double cisnienie_altimu, int PM1, int PM25, int PM10, int spis_dzialajacych, double napiecie_baterii)
+void zapisywanie_SD(double temperatura_BME280, double cisnienie_BME280, double wilgotnosc, double temperatura_DS18B20, int godzina, int minuta, int sekunda, int dzien, int miesiac, int rok, double lokalizacja[], char lokalizacja_znak[], double szybkosc_wezly, double kat, double wysokosc, int liczba_satelit, double akcelerometr[], double zyroskop[], double magnetometr[], double temperatura_altimu, double cisnienie_altimu, int PM1, int PM2_5, int PM10, int spis_dzialajacych, double napiecie_baterii)
 {
   digitalWrite(pin_cs_SD, LOW);
   plik = SD.open("test.txt", FILE_WRITE);
@@ -316,16 +315,16 @@ void zapisywanie_SD(double temperatura_BME280, double cisnienie, double wilgotno
     Serial.println("Zapis SD");
     plik.print(temperatura_BME280);
     plik.print(";");
-    plik.print(cisnienie);
+    plik.print(cisnienie_BME280);
     plik.print(";");
     plik.print(wilgotnosc);
     plik.print(";");
     plik.print(temperatura_DS18B20);
     plik.print(";");
     plik.print(godzina);
-    plik.print(":");
+    plik.print(";");
     plik.print(minuta);
-    plik.print(":");
+    plik.print(";");
     plik.print(sekunda);
     plik.print(";");
     plik.print(dzien);
@@ -374,7 +373,7 @@ void zapisywanie_SD(double temperatura_BME280, double cisnienie, double wilgotno
     plik.print(";");
     plik.print(PM1);
     plik.print(";");
-    plik.print(PM25);
+    plik.print(PM2_5);
     plik.print(";");
     plik.print(PM10);
     plik.print(";");
@@ -547,7 +546,7 @@ boolean readPMSdata(Stream *s)
   return true;
 }
 
-void odczytywanie_PMS7003(int &PM1, int &PM25, int &PM10)
+void odczytywanie_PMS7003(int &PM1, int &PM2_5, int &PM10)
 {
   //jesli nie uda sie odczytac, to robi 40 powtorzen
   znalezione_PMS = 0;
@@ -556,7 +555,7 @@ void odczytywanie_PMS7003(int &PM1, int &PM25, int &PM10)
     if (readPMSdata(&PMSSerial))
     {
       PM1 = data.pm10_standard;
-      PM25 = data.pm25_standard;
+      PM2_5 = data.pm25_standard;
       PM10 = data.pm100_standard;
       i = 40;
       znalezione_PMS = 1;
@@ -601,12 +600,12 @@ void odczytywanie_altimu(double akcelerometr[], double zyroskop[], double magnet
   }
 }
 
-void wyswietlanie(double temperatura_BME280, double cisnienie, double wilgotnosc, double temperatura_DS18B20, int godzina, int minuta, int sekunda, int dzien, int miesiac, int rok, int fix, int quality, double lokalizacja[], char lokalizacja_znak[], double szybkosc_wezly, double kat, double wysokosc, int liczba_satelit, double akcelerometr[], double zyroskop[], double magnetometr[], double temperatura_altimu, double cisnienie_altimu, int PM1, int PM25, int PM10, int spis_dzialajacych, double napiecie_baterii)
+void wyswietlanie(double temperatura_BME280, double cisnienie_BME280, double wilgotnosc, double temperatura_DS18B20, int godzina, int minuta, int sekunda, int dzien, int miesiac, int rok, int fix, int quality, double lokalizacja[], char lokalizacja_znak[], double szybkosc_wezly, double kat, double wysokosc, int liczba_satelit, double akcelerometr[], double zyroskop[], double magnetometr[], double temperatura_altimu, double cisnienie_altimu, int PM1, int PM2_5, int PM10, int spis_dzialajacych, double napiecie_baterii)
 {
   Serial.print("Temperatura_BME280: ");
   Serial.print(temperatura_BME280);
-  Serial.print("*C Cisnienie: ");
-  Serial.print(cisnienie);
+  Serial.print("*C cisnienie_BME280: ");
+  Serial.print(cisnienie_BME280);
   Serial.print("hPa Wilgotnosc: ");
   Serial.print(wilgotnosc);
   Serial.print("% Temperatura_DS18B20: ");
@@ -667,7 +666,7 @@ void wyswietlanie(double temperatura_BME280, double cisnienie, double wilgotnosc
   Serial.print("hPa PM1: ");
   Serial.print(PM1);
   Serial.print(" PM2.5: ");
-  Serial.print(PM25);
+  Serial.print(PM2_5);
   Serial.print(" PM10: ");
   Serial.print(PM10);
   Serial.print(" Spis_dzialajacych: ");
@@ -676,7 +675,7 @@ void wyswietlanie(double temperatura_BME280, double cisnienie, double wilgotnosc
   Serial.println(napiecie_baterii);
 }
 
-void wysylanie(int godzina, int minuta, int sekunda, double temperatura, double cisnienie, double lokalizacja[], char lokalizacja_znak[], double wysokosc, double akcelerometr[], double zyroskop[], int spis_dzialajacych, double napiecie_baterii)
+void wysylanie(int godzina, int minuta, int sekunda, double temperatura, double cisnienie_BME280, double lokalizacja[], char lokalizacja_znak[], double wysokosc, double akcelerometr[], double zyroskop[], int spis_dzialajacych, double napiecie_baterii, double temperatura_BME280, double wilgotnosc, double magnetometr[], double temperatura_altimu, double cisnienie_altimu, int PM1, int PM2_5, int PM10)
 {
   digitalWrite(pin_cs_nadajnik, LOW);
   
@@ -696,9 +695,9 @@ void wysylanie(int godzina, int minuta, int sekunda, double temperatura, double 
   int liczba_cyfr_100_temperatura;
   double_to_char_100(temperatura, temperatura_100, 2, liczba_cyfr_100_temperatura);
   
-  char cisnienie_100[7];
-  int liczba_cyfr_100_cisnienie;
-  double_to_char_100(cisnienie, cisnienie_100, 2, liczba_cyfr_100_cisnienie);
+  char cisnienie_BME280_100[7];
+  int liczba_cyfr_100_cisnienie_BME280;
+  double_to_char_100(cisnienie_BME280, cisnienie_BME280_100, 2, liczba_cyfr_100_cisnienie_BME280);
   
   char lokalizacja_100[2][10];
   int liczba_cyfr_100_lokalizacja[2];
@@ -727,9 +726,43 @@ void wysylanie(int godzina, int minuta, int sekunda, double temperatura, double 
 
   char napiecie_baterii_100[5];
   int liczba_cyfr_100_napiecie_baterii;
-  double_to_char_100(napiecie_baterii, napiecie_baterii_100, 2, liczba_cyfr_100_napiecie_baterii);  
+  double_to_char_100(napiecie_baterii, napiecie_baterii_100, 2, liczba_cyfr_100_napiecie_baterii);
 
-  int dlugosc_gotowego_tekstu = liczba_cyfr_100_godzina + liczba_cyfr_100_minuta + liczba_cyfr_100_sekunda + liczba_cyfr_100_temperatura + liczba_cyfr_100_cisnienie + liczba_cyfr_100_lokalizacja[0] + liczba_cyfr_100_lokalizacja[1] + liczba_cyfr_100_wysokosc + liczba_cyfr_100_akcelerometr[0] + liczba_cyfr_100_akcelerometr[1] + liczba_cyfr_100_akcelerometr[2] + liczba_cyfr_100_zyroskop[0] + liczba_cyfr_100_zyroskop[1] + liczba_cyfr_100_zyroskop[2]+ liczba_cyfr_100_spis_dzialajacych + liczba_cyfr_100_napiecie_baterii + 16;
+  char temperatura_BME280_100[7];
+  int liczba_cyfr_100_temperatura_BME280;
+  double_to_char_100(temperatura_BME280, temperatura_BME280_100, 2, liczba_cyfr_100_temperatura_BME280);
+
+  char wilgotnosc_100[7];
+  int liczba_cyfr_100_wilgotnosc;
+  double_to_char_100(wilgotnosc, wilgotnosc_100, 2, liczba_cyfr_100_wilgotnosc);
+
+  char magnetometr_100[3][7];
+  int liczba_cyfr_100_magnetometr[3];
+  double_to_char_100(magnetometr[0], magnetometr_100[0], 2, liczba_cyfr_100_magnetometr[0]);
+  double_to_char_100(magnetometr[1], magnetometr_100[1], 2, liczba_cyfr_100_magnetometr[1]);
+  double_to_char_100(magnetometr[2], magnetometr_100[2], 2, liczba_cyfr_100_magnetometr[2]);
+
+  char temperatura_altimu_100[7];
+  int liczba_cyfr_100_temperatura_altimu;
+  double_to_char_100(temperatura_altimu, temperatura_altimu_100, 2, liczba_cyfr_100_temperatura_altimu);
+
+  char cisnienie_altimu_100[7];
+  int liczba_cyfr_100_cisnienie_altimu;
+  double_to_char_100(cisnienie_altimu, cisnienie_altimu_100, 2, liczba_cyfr_100_cisnienie_altimu);
+
+  char PM1_100[5];
+  int liczba_cyfr_100_PM1;
+  int_to_char_100(PM1, PM1_100, liczba_cyfr_100_PM1);
+
+  char PM2_5_100[5];
+  int liczba_cyfr_100_PM2_5;
+  int_to_char_100(PM2_5, PM2_5_100, liczba_cyfr_100_PM2_5);
+
+  char PM10_100[5];
+  int liczba_cyfr_100_PM10;
+  int_to_char_100(PM10, PM10_100, liczba_cyfr_100_PM10);
+
+  int dlugosc_gotowego_tekstu = liczba_cyfr_100_godzina + liczba_cyfr_100_minuta + liczba_cyfr_100_sekunda + liczba_cyfr_100_temperatura + liczba_cyfr_100_cisnienie_BME280 + liczba_cyfr_100_lokalizacja[0] + liczba_cyfr_100_lokalizacja[1] + liczba_cyfr_100_wysokosc + liczba_cyfr_100_akcelerometr[0] + liczba_cyfr_100_akcelerometr[1] + liczba_cyfr_100_akcelerometr[2] + liczba_cyfr_100_zyroskop[0] + liczba_cyfr_100_zyroskop[1] + liczba_cyfr_100_zyroskop[2]+ liczba_cyfr_100_spis_dzialajacych + liczba_cyfr_100_napiecie_baterii + liczba_cyfr_100_temperatura_BME280 + liczba_cyfr_100_wilgotnosc + liczba_cyfr_100_magnetometr[0] + liczba_cyfr_100_magnetometr[1] + liczba_cyfr_100_magnetometr[2] + liczba_cyfr_100_temperatura_altimu + liczba_cyfr_100_cisnienie_altimu + liczba_cyfr_100_PM1 + liczba_cyfr_100_PM2_5 + liczba_cyfr_100_PM10 + 26;
   char gotowy_tekst[dlugosc_gotowego_tekstu + 1];
 
   int nr_znaku = 0;
@@ -738,7 +771,7 @@ void wysylanie(int godzina, int minuta, int sekunda, double temperatura, double 
   dopisywanie_gotowy_tekst(gotowy_tekst, minuta_100, liczba_cyfr_100_minuta, nr_znaku, 0);
   dopisywanie_gotowy_tekst(gotowy_tekst, sekunda_100, liczba_cyfr_100_sekunda, nr_znaku, 0);
   dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_100, liczba_cyfr_100_temperatura, nr_znaku, ujemna_sprawdz(temperatura));
-  dopisywanie_gotowy_tekst(gotowy_tekst, cisnienie_100, liczba_cyfr_100_cisnienie, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, cisnienie_BME280_100, liczba_cyfr_100_cisnienie_BME280, nr_znaku, 0);
   if(lokalizacja_znak[0] == 'N')
   {
     gotowy_tekst[nr_znaku] = 16;
@@ -766,6 +799,16 @@ void wysylanie(int godzina, int minuta, int sekunda, double temperatura, double 
   dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[2], liczba_cyfr_100_zyroskop[2], nr_znaku, ujemna_sprawdz(zyroskop[2]));
   dopisywanie_gotowy_tekst(gotowy_tekst, spis_dzialajacych_100, liczba_cyfr_100_spis_dzialajacych, nr_znaku, 0);
   dopisywanie_gotowy_tekst(gotowy_tekst, napiecie_baterii_100, liczba_cyfr_100_napiecie_baterii, nr_znaku, ujemna_sprawdz(napiecie_baterii));
+  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_BME280_100, liczba_cyfr_100_temperatura_BME280, nr_znaku, ujemna_sprawdz(temperatura_BME280));
+  dopisywanie_gotowy_tekst(gotowy_tekst, wilgotnosc_100, liczba_cyfr_100_wilgotnosc, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[0], liczba_cyfr_100_magnetometr[0], nr_znaku, ujemna_sprawdz(magnetometr[0]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[1], liczba_cyfr_100_magnetometr[1], nr_znaku, ujemna_sprawdz(magnetometr[1]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[2], liczba_cyfr_100_magnetometr[2], nr_znaku, ujemna_sprawdz(magnetometr[2]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_altimu_100, liczba_cyfr_100_temperatura_altimu, nr_znaku, ujemna_sprawdz(temperatura_altimu));
+  dopisywanie_gotowy_tekst(gotowy_tekst, cisnienie_altimu_100, liczba_cyfr_100_cisnienie_altimu, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, PM1_100, liczba_cyfr_100_PM1, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, PM2_5_100, liczba_cyfr_100_PM2_5, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, PM10_100, liczba_cyfr_100_PM10, nr_znaku, 0);
   
   gotowy_tekst[dlugosc_gotowego_tekstu] = '\0';
 
@@ -886,9 +929,9 @@ void loop()
     poczatek_calkowity = millis();
     timer = millis(); // reset the timer
 
-    double temperatura_BME280 = 0;
-    double cisnienie = 0;
-    double wilgotnosc = 0;
+    double temperatura_BME280 = 0;///////
+    double cisnienie_BME280 = 0;
+    double wilgotnosc = 0;///////////
     double temperatura_DS18B20 = 0;
     int godzina = 0;
     int minuta = 0;
@@ -906,11 +949,11 @@ void loop()
     int liczba_satelit = 0;
     double akcelerometr[3] = {0, 0, 0};
     double zyroskop[3] = {0, 0, 0};
-    double magnetometr[3] = {0, 0, 0};
-    double temperatura_altimu = 0;
-    double cisnienie_altimu = 0;
+    double magnetometr[3] = {0, 0, 0};/////////
+    double temperatura_altimu = 0;////////
+    double cisnienie_altimu = 0;//////////
     int PM1 = 0;
-    int PM25 = 0;
+    int PM2_5 = 0;
     int PM10 = 0;
 
     int spis_dzialajacych = 0;
@@ -923,7 +966,7 @@ void loop()
     Serial.println(koniec - poczatek);
 
     poczatek = millis();
-    odczytywanie_BME280(temperatura_BME280, cisnienie, wilgotnosc);
+    odczytywanie_BME280(temperatura_BME280, cisnienie_BME280, wilgotnosc);
     koniec = millis();
     Serial.print("Czas wykonania BME280: ");
     Serial.println(koniec - poczatek);
@@ -941,7 +984,7 @@ void loop()
     Serial.println(koniec - poczatek);
 
     poczatek = millis();
-    odczytywanie_PMS7003(PM1, PM25, PM10);
+    odczytywanie_PMS7003(PM1, PM2_5, PM10);
     koniec = millis();
     Serial.print("Czas wykonania PMS7003: ");
     Serial.println(koniec - poczatek);
@@ -951,7 +994,7 @@ void loop()
     mierzenie_napiecia_baterii(napiecie_baterii);
     
     poczatek = millis();
-    wyswietlanie(temperatura_BME280, cisnienie, wilgotnosc, temperatura_DS18B20, godzina, minuta, sekunda, dzien, miesiac, rok, fix, quality, lokalizacja, lokalizacja_znak, szybkosc_wezly, kat, wysokosc, liczba_satelit, akcelerometr, zyroskop, magnetometr, temperatura_altimu, cisnienie_altimu, PM1, PM25, PM10, spis_dzialajacych, napiecie_baterii);
+    wyswietlanie(temperatura_BME280, cisnienie_BME280, wilgotnosc, temperatura_DS18B20, godzina, minuta, sekunda, dzien, miesiac, rok, fix, quality, lokalizacja, lokalizacja_znak, szybkosc_wezly, kat, wysokosc, liczba_satelit, akcelerometr, zyroskop, magnetometr, temperatura_altimu, cisnienie_altimu, PM1, PM2_5, PM10, spis_dzialajacych, napiecie_baterii);
     koniec = millis();
     Serial.print("Czas wykonania wyswietlanie: ");
     Serial.println(koniec - poczatek);
@@ -959,7 +1002,7 @@ void loop()
     poczatek = millis();
     if(znalezione_SD == 1)
     {
-      zapisywanie_SD(temperatura_BME280, cisnienie, wilgotnosc, temperatura_DS18B20, godzina, minuta, sekunda, dzien, miesiac, rok, lokalizacja, lokalizacja_znak, szybkosc_wezly, kat, wysokosc, liczba_satelit, akcelerometr, zyroskop, magnetometr, temperatura_altimu, cisnienie_altimu, PM1, PM25, PM10, spis_dzialajacych, napiecie_baterii);
+      zapisywanie_SD(temperatura_BME280, cisnienie_BME280, wilgotnosc, temperatura_DS18B20, godzina, minuta, sekunda, dzien, miesiac, rok, lokalizacja, lokalizacja_znak, szybkosc_wezly, kat, wysokosc, liczba_satelit, akcelerometr, zyroskop, magnetometr, temperatura_altimu, cisnienie_altimu, PM1, PM2_5, PM10, spis_dzialajacych, napiecie_baterii);
     }
     koniec = millis();
     Serial.print("Czas wykonania SD: ");
@@ -968,7 +1011,7 @@ void loop()
     poczatek = millis();
     if(znalezione_nadajnik == 1)
     {
-      wysylanie(godzina, minuta, sekunda, temperatura_DS18B20, cisnienie, lokalizacja, lokalizacja_znak, wysokosc, akcelerometr, zyroskop, spis_dzialajacych, napiecie_baterii);
+      wysylanie(godzina, minuta, sekunda, temperatura_DS18B20, cisnienie_BME280, lokalizacja, lokalizacja_znak, wysokosc, akcelerometr, zyroskop, spis_dzialajacych, napiecie_baterii, temperatura_BME280, wilgotnosc, magnetometr, temperatura_altimu, cisnienie_altimu, PM1, PM2_5, PM10);
     }
     koniec = millis();
     Serial.print("Czas wykonania wysylanie: ");
