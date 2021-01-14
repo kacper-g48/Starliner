@@ -1,0 +1,398 @@
+#include <RH_RF95.h>
+
+#define RFM95_CS 8
+#define RFM95_RST 4
+#define RFM95_INT 3
+
+#define RF95_FREQ 433.0
+
+RH_RF95 rf95(RFM95_CS, RFM95_INT);
+
+bool znalezione_GPS_stacja = 0;
+bool znalezione_altimu_zyro_akce_stacja = 0;
+bool znalezione_altimu_magnetometr_stacja = 0;
+bool znalezione_altimu_temp_cisn_stacja = 0;
+bool znalezione_nadajnik_stacja = 0;
+
+
+double lokalizacja_stacja[2] = {0.0, 0.0};
+char lokalizacja_znak_stacja[2] = {' ', ' '};
+double temperatura_altimu_stacja = 0;
+double cisnienie_altimu_stacja = 0;
+double roznica_wysokosci = 0;
+double odleglosc_prosta = 0;
+double odleglosc_calkowita = 0;
+double kat_wysokosc = 0;
+double kat_obrot = 0;
+
+int spis_dzialajacych_stacja = 0;
+int RSSI_stacja = 0;
+
+void tworzenie_spisu_dzialajacych_stacja()
+{
+  spis_dzialajacych_stacja += (znalezione_GPS_stacja?1:0)*16;
+  spis_dzialajacych_stacja += (znalezione_altimu_zyro_akce_stacja?1:0)*8;
+  spis_dzialajacych_stacja += (znalezione_altimu_magnetometr_stacja?1:0)*4;
+  spis_dzialajacych_stacja += (znalezione_altimu_temp_cisn_stacja?1:0)*2;
+  spis_dzialajacych_stacja += (znalezione_nadajnik_stacja?1:0)*1;
+}
+
+int potega(int liczba, int potega)
+{
+    if(potega == 0)
+    {
+      return 1;
+    }
+    int liczba_poczatkowa = liczba;
+    for(int i = 1; i < potega; i++)
+    {
+        liczba_poczatkowa *= liczba;
+    }
+    return liczba_poczatkowa;
+}
+
+bool ujemna_sprawdz(double liczba)
+{
+  if(liczba > 0)
+  {
+    return 0;
+  }
+  else
+  {
+    return 1;
+  }
+}
+
+bool ujemna_sprawdz(int liczba)
+{
+  if(liczba > 0)
+  {
+    return 0;
+  }
+  else
+  {
+    return 1;
+  }
+}
+
+char cyfra_to_char_100(int cyfra_100)
+{
+    return cyfra_100+20;
+}
+
+void int_to_char_100(int liczba, char tekst[], int &liczba_cyfr_100)
+{
+    if(liczba < 0)
+    {
+      liczba *= -1;
+    }
+    liczba_cyfr_100 = 1;
+    for (int i = 100; i <= 100000000; i *= 100)
+    {
+        if (liczba < i)
+        {
+            break;
+        }
+        liczba_cyfr_100++;
+    }
+
+    int cyfra_100;
+    int licznik = 0;
+
+
+
+    for(int i = potega(100, liczba_cyfr_100-1); i >= 1; i /= 100)
+    {
+        cyfra_100 = liczba / i;
+        liczba -= cyfra_100 * i;
+        tekst[licznik] = cyfra_to_char_100(cyfra_100);
+        licznik++;
+    }
+    tekst[licznik] = '\0';
+}
+
+void zaokraglij(int &liczba)
+{
+  if(liczba%10 < 5)
+  {
+    return;
+  }
+  else
+  {
+    liczba += 10;
+  }
+}
+
+void double_to_char_100(double liczba, char tekst[], int liczba_miejsc_po_przecinku, int &liczba_cyfr_100)
+{
+    liczba *= potega(10, liczba_miejsc_po_przecinku+1);
+    int liczba_int = liczba;
+    zaokraglij(liczba_int);
+    liczba_int /= 10;
+    int_to_char_100(liczba_int, tekst, liczba_cyfr_100);
+}
+
+void dopisywanie_gotowy_tekst(char gotowy_tekst[], char tekst[], int liczba_cyfr_100, int &nr_znaku, int ujemna)
+{
+  if(ujemna == 1)
+  {
+    gotowy_tekst[nr_znaku] = 18;
+    nr_znaku++;
+  }
+  else if(ujemna == 0)
+  {
+    gotowy_tekst[nr_znaku] = 19;
+    nr_znaku++;
+  }
+  else
+  {
+    nr_znaku++;
+  }
+  for(int i=0; i<liczba_cyfr_100; i++)
+  {
+    gotowy_tekst[nr_znaku] = tekst[i];
+    nr_znaku++;
+  }
+}
+
+void przesylanie_do_komputera(uint8_t buf[RH_RF95_MAX_MESSAGE_LEN])
+{
+  int liczba_znakow_cansat = 0;
+
+  while(buf[liczba_znakow_cansat] != '\0' && liczba_znakow_cansat < RH_RF95_MAX_MESSAGE_LEN)
+  {
+    liczba_znakow_cansat++;
+  }
+
+  int liczba_dopisanych_znakow = 0;
+
+  char lokalizacja_stacja_100[2][10];
+  int liczba_cyfr_100_lokalizacja_stacja[2];
+  double_to_char_100(lokalizacja_stacja[0], lokalizacja_stacja_100[0], 4, liczba_cyfr_100_lokalizacja_stacja[0]);
+  double_to_char_100(lokalizacja_stacja[1], lokalizacja_stacja_100[1], 4, liczba_cyfr_100_lokalizacja_stacja[1]);
+  liczba_dopisanych_znakow += liczba_cyfr_100_lokalizacja_stacja[0] + 1;
+  liczba_dopisanych_znakow += liczba_cyfr_100_lokalizacja_stacja[1] + 1;
+
+  char temperatura_altimu_stacja_100[7];
+  int liczba_cyfr_100_temperatura_altimu_stacja;
+  double_to_char_100(temperatura_altimu_stacja, temperatura_altimu_stacja_100, 2, liczba_cyfr_100_temperatura_altimu_stacja);
+  liczba_dopisanych_znakow += liczba_cyfr_100_temperatura_altimu_stacja + 1;
+
+  char cisnienie_altimu_stacja_100[7];
+  int liczba_cyfr_100_cisnienie_altimu_stacja;
+  double_to_char_100(cisnienie_altimu_stacja, cisnienie_altimu_stacja_100, 2, liczba_cyfr_100_cisnienie_altimu_stacja);
+  liczba_dopisanych_znakow += liczba_cyfr_100_cisnienie_altimu_stacja + 1;
+
+  char roznica_wysokosci_100[7];
+  int liczba_cyfr_100_roznica_wysokosci;
+  double_to_char_100(roznica_wysokosci, roznica_wysokosci_100, 2, liczba_cyfr_100_roznica_wysokosci);
+  liczba_dopisanych_znakow += liczba_cyfr_100_roznica_wysokosci + 1;
+  
+  char odleglosc_prosta_100[7];
+  int liczba_cyfr_100_odleglosc_prosta;
+  double_to_char_100(odleglosc_prosta, odleglosc_prosta_100, 2, liczba_cyfr_100_odleglosc_prosta);
+  liczba_dopisanych_znakow += liczba_cyfr_100_odleglosc_prosta + 1;
+  
+  char odleglosc_calkowita_100[7];
+  int liczba_cyfr_100_odleglosc_calkowita;
+  double_to_char_100(odleglosc_calkowita, odleglosc_calkowita_100, 2, liczba_cyfr_100_odleglosc_calkowita);
+  liczba_dopisanych_znakow += liczba_cyfr_100_odleglosc_calkowita + 1;
+
+  char kat_wysokosc_100[7];
+  int liczba_cyfr_100_kat_wysokosc;
+  double_to_char_100(kat_wysokosc, kat_wysokosc_100, 2, liczba_cyfr_100_kat_wysokosc);
+  liczba_dopisanych_znakow += liczba_cyfr_100_kat_wysokosc + 1;
+
+  char kat_obrot_100[7];
+  int liczba_cyfr_100_kat_obrot;
+  double_to_char_100(kat_obrot, kat_obrot_100, 2, liczba_cyfr_100_kat_obrot);
+  liczba_dopisanych_znakow += liczba_cyfr_100_kat_obrot + 1;
+
+  char spis_dzialajacych_stacja_100[7];
+  int liczba_cyfr_100_spis_dzialajacych_stacja;
+  int_to_char_100(spis_dzialajacych_stacja, spis_dzialajacych_stacja_100, liczba_cyfr_100_spis_dzialajacych_stacja);
+  liczba_dopisanych_znakow += liczba_cyfr_100_spis_dzialajacych_stacja + 1;
+
+  char RSSI_stacja_100[7];
+  int liczba_cyfr_100_RSSI_stacja;
+  int_to_char_100(RSSI_stacja, RSSI_stacja_100, liczba_cyfr_100_RSSI_stacja);
+  liczba_dopisanych_znakow += liczba_cyfr_100_RSSI_stacja + 1;
+  
+  int nr_znaku = liczba_znakow_cansat; //-1, bo komorki tablicy liczy sie od 0
+
+  int liczba_znakow_gotowy = liczba_znakow_cansat + liczba_dopisanych_znakow + 6; //+6 - 6 znakow kontrolnych na koncu
+
+  char gotowy_tekst[liczba_znakow_gotowy];
+
+  //DOPISANIE Z CANSATA
+  for(int i=0; i<liczba_znakow_cansat; i++)
+  {
+    gotowy_tekst[i] = buf[i];
+  }
+  
+  //DOPISANIE ZE STACJI NAZIEMNEJ
+  if(lokalizacja_znak_stacja[0] == 'N')
+  {
+    gotowy_tekst[nr_znaku] = 16;
+  }
+  else                    //'S'
+  {
+    gotowy_tekst[nr_znaku] = 17;
+  }
+  dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_stacja_100[0], liczba_cyfr_100_lokalizacja_stacja[0], nr_znaku, 2);
+  if(lokalizacja_znak_stacja[1] == 'W')
+  {
+    gotowy_tekst[nr_znaku] = 16;
+  }
+  else                    //'E'
+  {
+    gotowy_tekst[nr_znaku] = 17;
+  }
+  dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_stacja_100[1], liczba_cyfr_100_lokalizacja_stacja[1], nr_znaku, 2);
+  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_altimu_stacja_100, liczba_cyfr_100_temperatura_altimu_stacja, nr_znaku, ujemna_sprawdz(temperatura_altimu_stacja));
+  dopisywanie_gotowy_tekst(gotowy_tekst, cisnienie_altimu_stacja_100, liczba_cyfr_100_cisnienie_altimu_stacja, nr_znaku, ujemna_sprawdz(cisnienie_altimu_stacja));
+  dopisywanie_gotowy_tekst(gotowy_tekst, roznica_wysokosci_100, liczba_cyfr_100_roznica_wysokosci, nr_znaku, ujemna_sprawdz(roznica_wysokosci));
+  dopisywanie_gotowy_tekst(gotowy_tekst, odleglosc_prosta_100, liczba_cyfr_100_odleglosc_prosta, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, odleglosc_calkowita_100, liczba_cyfr_100_odleglosc_calkowita, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, kat_wysokosc_100, liczba_cyfr_100_kat_wysokosc, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, kat_obrot_100, liczba_cyfr_100_kat_obrot, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, spis_dzialajacych_stacja_100, liczba_cyfr_100_spis_dzialajacych_stacja, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, RSSI_stacja_100, liczba_cyfr_100_RSSI_stacja, nr_znaku, ujemna_sprawdz(RSSI_stacja));
+  
+  //DOPISANIE ZNAKI KONTROLNE
+  gotowy_tekst[liczba_znakow_gotowy-6] = 18;
+  gotowy_tekst[liczba_znakow_gotowy-5] = '_';
+  gotowy_tekst[liczba_znakow_gotowy-4] = '_';
+  gotowy_tekst[liczba_znakow_gotowy-3] = '_';
+  gotowy_tekst[liczba_znakow_gotowy-2] = '_';
+  gotowy_tekst[liczba_znakow_gotowy-1] = '\0';
+
+
+  //TWORZENIE LICZBA WYSYLANYCH ZNAKOW
+  char tablica_znakow[10] = {'0','1','2','3','4','5','6','7','8','9'};
+
+  char liczba_znakow_char[15];
+  liczba_znakow_char[0] = '_';
+  liczba_znakow_char[1] = '_';
+  liczba_znakow_char[2] = '_';
+  liczba_znakow_char[3] = '_';
+  liczba_znakow_char[4] = 'x';
+  liczba_znakow_char[9] = 'x';
+  liczba_znakow_char[10] = '_';
+  liczba_znakow_char[11] = '_';
+  liczba_znakow_char[12] = '_';
+  liczba_znakow_char[13] = '_';
+  liczba_znakow_char[14] = '\0';
+
+  liczba_znakow_gotowy += 1;                //+1, bo wysyla jeszcze endl
+  
+  int liczba = liczba_znakow_gotowy/1000;     
+  liczba_znakow_char[5] = tablica_znakow[liczba];
+  liczba_znakow_gotowy -= liczba*1000;
+  
+  liczba = liczba_znakow_gotowy/100;
+  liczba_znakow_char[6] = tablica_znakow[liczba];
+  liczba_znakow_gotowy -= liczba*100;
+
+  liczba = liczba_znakow_gotowy/10;
+  liczba_znakow_char[7] = tablica_znakow[liczba];
+  liczba_znakow_gotowy -= liczba*10;
+
+  liczba = liczba_znakow_gotowy;
+  liczba_znakow_char[8] = tablica_znakow[liczba];
+  
+  Serial.println(liczba_znakow_char);
+  delay(5);
+  Serial.println(gotowy_tekst);
+}
+
+void setup()
+{
+  digitalWrite(12, HIGH);
+
+  pinMode(RFM95_RST, OUTPUT);
+  digitalWrite(RFM95_RST, HIGH);
+
+  Serial.begin(115200);
+
+  digitalWrite(RFM95_RST, LOW);
+  delay(10);
+  digitalWrite(RFM95_RST, HIGH);
+  delay(10);
+
+  znalezione_nadajnik_stacja = 1;
+
+  while (!rf95.init())
+  {
+    znalezione_nadajnik_stacja = 0;
+  }
+
+
+  if (!rf95.setFrequency(RF95_FREQ))
+  {
+    znalezione_nadajnik_stacja = 0;
+  }
+
+  rf95.setTxPower(23, false);
+
+  digitalWrite(8, LOW); //wlaczenie nadajnika
+}
+
+void loop()
+{
+  if (rf95.available())
+  {
+    uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+    uint8_t len = sizeof(buf);
+
+    if (rf95.recv(buf, &len))
+    {
+      digitalWrite(13, HIGH);
+
+      roznica_wysokosci = 0;
+      odleglosc_prosta = 0;
+      odleglosc_calkowita = 0;
+      kat_wysokosc = 0;
+      kat_obrot = 0;
+      lokalizacja_stacja[0] = 0;
+      lokalizacja_stacja[1] = 0;
+      lokalizacja_znak_stacja[0] = ' ';
+      lokalizacja_znak_stacja[1] = ' ';
+      temperatura_altimu_stacja = 0;
+      cisnienie_altimu_stacja = 0;
+
+      RSSI_stacja = rf95.lastRssi();
+
+      przesylanie_do_komputera(buf);
+
+      char tekst_do_odeslania_do_cansata[10];
+      int licznik_znaku = 0;
+      int czas_rozpoczecie_czekania = millis();
+
+      while(millis()-czas_rozpoczecie_czekania < 100 && licznik_znaku != 9)
+      {
+        while(Serial.available() > 0)
+        {
+          tekst_do_odeslania_do_cansata[licznik_znaku] = Serial.read();
+          licznik_znaku++;
+        }
+      }
+
+      if(licznik_znaku == 9)
+      {
+        delay(100);
+        tekst_do_odeslania_do_cansata[9] = '\0';
+
+        rf95.send((uint8_t *)tekst_do_odeslania_do_cansata, 10);
+        rf95.waitPacketSent();
+      }
+      
+
+      digitalWrite(13, LOW);
+    }
+    else
+    {
+      ;
+    }
+  }
+}
