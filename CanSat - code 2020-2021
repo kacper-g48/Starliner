@@ -1,0 +1,1053 @@
+#include <Wire.h>//biblioteka AltIMU-10
+
+#include <DFRobot_SHT3x.h>//biblioteka SHT
+
+#include <LSM6.h>//biblioteka AltIMU-10 (akcelerometr i zyroskop)
+
+#include <LIS3MDL.h>//biblioteka AltIMU-10 (magnetometr)
+
+#include <LPS.h>//biblioteka AltIMU-10 (temperatura i cisnienie)
+
+#include <SPI.h>//biblioteka komunikacji SPI
+
+#include <SD.h>//biblioteka karty SD
+
+#include <OneWire.h>//biblioteka DS18B20
+
+#include <RH_RF95.h>//biblioteka nadajnika
+
+#include <Adafruit_GPS.h> //biblioteka gps
+
+#include <math.h>
+
+#define GPSSerial Serial1
+
+Adafruit_GPS GPS(&GPSSerial); //stworzenie obiektu GPS
+
+bool znalezione_SD = 0;
+bool znalezione_SHT = 0;
+bool znalezione_DS18B20 = 0;
+bool znalezione_GPS = 0;
+bool znalezione_altimu_zyro_akce = 0;
+bool znalezione_altimu_magnetometr = 0;
+bool znalezione_altimu_temp_cisn = 0;
+bool znalezione_wilgotnosc_ziemi = 0;
+bool znalezione_nadajnik = 0;
+
+double temperatura_SHT = 0;
+double wilgotnosc = 0;
+double temperatura_DS18B20 = 0;
+int godzina = 0;
+int minuta = 0;
+int sekunda = 0;
+int dzien = 0;
+int miesiac = 0;
+int rok = 0;
+int fix = 0;
+int quality = 0;
+double lokalizacja[2] = {0, 0};
+char lokalizacja_znak[2] = {' ', ' '};
+double szybkosc_wezly = 0;
+double kat = 0;
+double wysokosc = 0;
+int liczba_satelit = 0;
+double akcelerometr[3] = {0, 0, 0};
+double zyroskop[3] = {0, 0, 0};
+double magnetometr[3] = {0, 0, 0};
+double temperatura_altimu = 0;
+double cisnienie_altimu = 0;
+double wilgotnosc_ziemi = 0;
+
+int spis_dzialajacych = 0;
+double napiecie_baterii = 0;
+int RSSI_cansat = 0;
+int opis_dzialania = 0;
+
+
+int pin_cs_nadajnik = 8;
+int pin_RST_nadajnik = 4;
+int pin_INT_nadajnik = 3;
+#define czestotliwosc_nadajnika 433.0
+
+RH_RF95 rf95(pin_cs_nadajnik, pin_INT_nadajnik);
+
+int pin_cs_SD = 12;
+
+OneWire  ds18b20(6);
+
+DFRobot_SHT3x sht3x; //zmienna do pomiarow z SHT
+
+LSM6 imu; //zmienna do pomiarow z AltIMU-10 (żyroskop i akcelerometr)
+
+LIS3MDL mag; //zmienna do pomiarow z AltIMU-10 (magnetometr)
+
+LPS ps; //zmienna do pomiarow z AltIMU-10 (temperatura i cisnienie)
+
+File plik;//zainicjowanie zmiennej pliku tekstowego
+
+uint32_t timer = millis();//utworzenie stopera do odmierzania czasu pomiedzy pomiarami
+
+//liczenie czasu potrzebnego kazdemu czujnikowi
+uint32_t poczatek_calkowity;
+uint32_t koniec_calkowity;
+uint32_t poczatek;
+uint32_t koniec;
+
+//SHT
+/*
+  VCC - 3.3V
+  GND - GND
+  SCL - SCL
+  SDA - SDA
+*/
+
+//SD Card
+/*
+  wszystkie piny z jednej linii
+  GND - GND
+  VDD - 3.3V
+  DI - MOSI
+  DO - MISO
+  SCLK - SCK
+  CS - pin 12
+*/
+
+//LoRa Radio
+/*
+  VCC - 3.3V
+  GND - GND
+  MOSI - MOSI
+  MISO - MISO
+  CLK - SCK
+  CS - pin 8
+  RST - pin 4
+  INT - pin 3
+*/
+
+//DS18B20
+/*
+  numeracja od lewej strony (płaska)
+  1 pin - GND
+  2 pin - pin 6 + 3.3V przez rezystor 4.7k Ohm
+  3 pin - 3.3V
+*/
+
+//GPS
+/*
+  VCC - 3.3V
+  GND - GND
+  TX - RX
+  RX - TX
+*/
+
+//Altimu
+/*
+  VIN - 3.3V
+  GND - GND
+  SCL - SCL
+  SDA - SDA
+*/
+
+//Czujnik wilgotnosci ziemi
+/*
+  VCC - 3.3V
+  GND - GND
+  A0 - A0
+*/
+
+//Silniki - krecenie kol
+/*
+  IA1 - A1 (SZYBKOSC - PRAWY)
+  IA2 - 9 (KIERUNEK - PRAWY)
+  IB1 - A2 (SZYBKOSC - LEWY)
+  IB2 - 10 (KIERUNEK - LEWY)
+  VCC - 3.3V
+  GND - GND
+  --------------------------
+  VM - BATERIA +
+  GND - BATERIA -
+  MB1 - SILNIK - (LEWY)
+  MB2 - SILNIK + (LEWY)
+  MA1 - SILNIK + (PRAWY)
+  MA2 - SILNIK - (PRAWY)
+*/
+
+//Silniki - wysuw kol
+/*
+  IA1 - A3 (SZYBKOSC)
+  IA2 - 11 (KIERUNEK)
+  IB1 - A3 (SZYBKOSC)
+  IB2 - 11 (KIERUNEK)
+  VCC - 3.3V
+  GND - GND
+  --------------------------
+  VM - BATERIA +
+  GND - BATERIA -
+  MB1 - SILNIK + (LEWY)
+  MB2 - SILNIK - (LEWY)
+  MA1 - SILNIK + (PRAWY)
+  MA2 - SILNIK - (PRAWY)
+*/
+
+//Silnik - wysuwanie czujnika wilgotnosci
+/*
+  IA1 - A4 (SZYBKOSC)
+  IA2 - 11 (KIERUNEK)
+  VCC - 3.3V
+  GND - GND
+  --------------------------
+  VM - BATERIA +
+  GND - BATERIA -
+  MA1 - SILNIK +
+  MA2 - SILNIK -
+*/
+
+//Silnik - odczepianie spadochronu
+/*
+
+*/
+
+
+int potega(int liczba, int potega)
+{
+  if (potega == 0)
+  {
+    return 1;
+  }
+  int liczba_poczatkowa = liczba;
+  for (int i = 1; i < potega; i++)
+  {
+    liczba_poczatkowa *= liczba;
+  }
+  return liczba_poczatkowa;
+}
+
+bool ujemna_sprawdz(double liczba)
+{
+  if (liczba > 0)
+  {
+    return 0;
+  }
+  else
+  {
+    return 1;
+  }
+}
+
+bool ujemna_sprawdz(int liczba)
+{
+  if (liczba > 0)
+  {
+    return 0;
+  }
+  else
+  {
+    return 1;
+  }
+}
+
+char cyfra_to_char_100(int cyfra_100)
+{
+  return cyfra_100 + 20;
+}
+
+void int_to_char_100(int liczba, char tekst[], int &liczba_cyfr_100)
+{
+  if (liczba < 0)
+  {
+    liczba *= -1;
+  }
+  liczba_cyfr_100 = 1;
+  for (int i = 100; i <= 100000000; i *= 100)
+  {
+    if (liczba < i)
+    {
+      break;
+    }
+    liczba_cyfr_100++;
+  }
+
+  int cyfra_100;
+  int licznik = 0;
+
+
+
+  for (int i = potega(100, liczba_cyfr_100 - 1); i >= 1; i /= 100)
+  {
+    cyfra_100 = liczba / i;
+    liczba -= cyfra_100 * i;
+    tekst[licznik] = cyfra_to_char_100(cyfra_100);
+    licznik++;
+  }
+  tekst[licznik] = '\0';
+}
+
+void zaokraglij(int &liczba)
+{
+  if (liczba % 10 < 5)
+  {
+    return;
+  }
+  else
+  {
+    liczba += 10;
+  }
+}
+
+void double_to_char_100(double liczba, char tekst[], int liczba_miejsc_po_przecinku, int &liczba_cyfr_100)
+{
+  liczba *= potega(10, liczba_miejsc_po_przecinku + 1);
+  int liczba_int = liczba;
+  zaokraglij(liczba_int);
+  liczba_int /= 10;
+  int_to_char_100(liczba_int, tekst, liczba_cyfr_100);
+}
+
+void dopisywanie_gotowy_tekst(char gotowy_tekst[], char tekst[], int liczba_cyfr_100, int &nr_znaku, int ujemna)
+{
+  if (ujemna == 1)
+  {
+    gotowy_tekst[nr_znaku] = 18;
+    nr_znaku++;
+  }
+  else if (ujemna == 0)
+  {
+    gotowy_tekst[nr_znaku] = 19;
+    nr_znaku++;
+  }
+  else
+  {
+    nr_znaku++;
+  }
+  for (int i = 0; i < liczba_cyfr_100; i++)
+  {
+    gotowy_tekst[nr_znaku] = tekst[i];
+    nr_znaku++;
+  }
+}
+
+void tworzenie_spisu_dzialajacych()
+{
+  spis_dzialajacych += (znalezione_SD ? 1 : 0) * 256;
+  spis_dzialajacych += (znalezione_SHT ? 1 : 0) * 128;
+  spis_dzialajacych += (znalezione_DS18B20 ? 1 : 0) * 64;
+  spis_dzialajacych += (znalezione_GPS ? 1 : 0) * 32;
+  spis_dzialajacych += (znalezione_altimu_zyro_akce ? 1 : 0) * 16;
+  spis_dzialajacych += (znalezione_altimu_magnetometr ? 1 : 0) * 8;
+  spis_dzialajacych += (znalezione_altimu_temp_cisn ? 1 : 0) * 4;
+  spis_dzialajacych += (znalezione_wilgotnosc_ziemi ? 1 : 0) * 2;
+  spis_dzialajacych += (znalezione_nadajnik ? 1 : 0) * 1;
+}
+
+void mierzenie_napiecia_baterii()
+{
+  napiecie_baterii = analogRead(A7) * 6.6 / 1024;
+}
+
+void odczytywanie_SHT()
+{
+  DFRobot_SHT3x::sRHAndTemp_t data = sht3x.readTemperatureAndHumidity(sht3x.eRepeatability_High);
+  if(data.ERR == 0)
+  {
+    temperatura_SHT = data.TemperatureC;
+    wilgotnosc = data.Humidity;
+    znalezione_SHT = 1;
+  }
+  else
+  {
+    znalezione_SHT = 0;
+  }
+}
+
+void odczytywanie_wilgotnosc_ziemi()
+{
+  znalezione_wilgotnosc_ziemi = 0;
+}
+
+void zapisywanie_SD()
+{
+  digitalWrite(pin_cs_SD, LOW);
+  plik = SD.open("test.txt", FILE_WRITE);
+  if (plik)
+  {
+    znalezione_SD = 1;
+    Serial.println("Zapis SD");
+    plik.print(temperatura_SHT);
+    plik.print(";");
+    plik.print(wilgotnosc);
+    plik.print(";");
+    plik.print(temperatura_DS18B20);
+    plik.print(";");
+    plik.print(godzina);
+    plik.print(";");
+    plik.print(minuta);
+    plik.print(";");
+    plik.print(sekunda);
+    plik.print(";");
+    plik.print(dzien);
+    plik.print(".");
+    plik.print(miesiac);
+    plik.print(".");
+    plik.print(rok);
+    plik.print(";");
+    plik.print(lokalizacja[0], 4);
+    plik.print(";");
+    plik.print(lokalizacja_znak[0]);
+    plik.print(";");
+    plik.print(lokalizacja[1], 4);
+    plik.print(";");
+    plik.print(lokalizacja_znak[1]);
+    plik.print(";");
+    plik.print(szybkosc_wezly);
+    plik.print(";");
+    plik.print(kat);
+    plik.print(";");
+    plik.print(wysokosc);
+    plik.print(";");
+    plik.print(liczba_satelit);
+    plik.print(";");
+    plik.print(akcelerometr[0]);
+    plik.print(";");
+    plik.print(akcelerometr[1]);
+    plik.print(";");
+    plik.print(akcelerometr[2]);
+    plik.print(";");
+    plik.print(zyroskop[0]);
+    plik.print(";");
+    plik.print(zyroskop[1]);
+    plik.print(";");
+    plik.print(zyroskop[2]);
+    plik.print(";");
+    plik.print(magnetometr[0]);
+    plik.print(";");
+    plik.print(magnetometr[1]);
+    plik.print(";");
+    plik.print(magnetometr[2]);
+    plik.print(";");
+    plik.print(temperatura_altimu);
+    plik.print(";");
+    plik.print(cisnienie_altimu);
+    plik.print(";");
+    plik.print(spis_dzialajacych);
+    plik.print(";");
+    plik.println(napiecie_baterii);
+  }
+  else
+  {
+    Serial.println("Nie mozna otworzyc pliku na karcie SD");
+    znalezione_SD = 0;
+  }
+
+  plik.close();
+  digitalWrite(pin_cs_SD, HIGH);
+}
+
+void odczytywanie_DS18B20()
+{
+  byte present = 0;
+  byte type_s;
+  byte data[12];
+  byte addr[8];
+  double celsius;
+
+  ds18b20.reset_search();
+  if (!ds18b20.search(addr))
+  {
+    ds18b20.reset_search();
+    znalezione_DS18B20 = 0;
+  }
+  else
+  {
+    znalezione_DS18B20 = 1;
+  }
+
+  if (znalezione_DS18B20 == 1)
+  {
+    if (OneWire::crc8(addr, 7) != addr[7])
+    {
+      znalezione_DS18B20 = 0;
+    }
+    else
+    {
+      ds18b20.reset();
+      ds18b20.select(addr);
+      ds18b20.write(0x44, 1);
+
+      present = ds18b20.reset();
+      ds18b20.select(addr);
+      ds18b20.write(0xBE);
+
+      for (byte i = 0; i < 9; i++)
+      {
+        data[i] = ds18b20.read();
+      }
+
+      int16_t raw = (data[1] << 8) | data[0];
+
+      if (addr[0] == 0x28)
+      {
+        byte cfg = (data[4] & 0x60);
+        if (cfg == 0x00)
+          raw = raw & ~7;
+        else if (cfg == 0x20)
+          raw = raw & ~3;
+        else if (cfg == 0x40)
+          raw = raw & ~1;
+
+        celsius = (double)raw / 16.0;
+        temperatura_DS18B20 = celsius;
+      }
+      else
+      {
+        znalezione_DS18B20 = 0;
+      }
+    }
+  }
+}
+
+void odczytywanie_stale_gps()
+{
+  GPS.read();
+
+  if (GPS.newNMEAreceived())
+  {
+    if (!GPS.parse(GPS.lastNMEA()))
+    {
+      return;
+    }
+  }
+}
+
+void odczytywanie_gps()
+{
+  znalezione_GPS = 0;
+
+  //CZAS
+  godzina = GPS.hour;
+  minuta = GPS.minute;
+  sekunda = GPS.seconds;
+
+  //DATA
+  dzien = GPS.day;
+  miesiac = GPS.month;
+  rok = GPS.year;
+
+  fix = (int)GPS.fix;
+  quality = (int)GPS.fixquality;
+
+  if (fix)
+  {
+    znalezione_GPS = 1;
+    lokalizacja[0] = GPS.latitude;
+    lokalizacja_znak[0] = GPS.lat;
+    lokalizacja[1] = GPS.longitude;
+    lokalizacja_znak[1] = GPS.lon;
+    szybkosc_wezly = GPS.speed;
+    kat = GPS.angle;
+    wysokosc = GPS.altitude;
+    liczba_satelit = (int)GPS.satellites;
+  }
+}
+
+void odczytywanie_altimu()
+{
+  if (imu.read() == 0)
+  {
+    akcelerometr[0] = imu.a.x * 0.488 / 1000;
+    akcelerometr[1] = imu.a.y * 0.488 / 1000;
+    akcelerometr[2] = imu.a.z * 0.488 / 1000;
+    zyroskop[0] = imu.g.x * 70 / 1000.0;
+    zyroskop[1] = imu.g.y * 70 / 1000.0;
+    zyroskop[2] = imu.g.z * 70 / 1000.0;
+    znalezione_altimu_zyro_akce = 1;
+  }
+  else
+  {
+    znalezione_altimu_zyro_akce = 0;
+  }
+
+  if (mag.read() == 0)
+  {
+    magnetometr[0] = mag.m.x / 6842.0;
+    magnetometr[1] = mag.m.y / 6842.0;
+    magnetometr[2] = mag.m.z / 6842.0;
+    znalezione_altimu_magnetometr = 1;
+  }
+  else
+  {
+    znalezione_altimu_magnetometr = 0;
+  }
+
+  if (ps.read(temperatura_altimu, cisnienie_altimu) == 0)
+  {
+    znalezione_altimu_temp_cisn = 1;
+  }
+  else
+  {
+    znalezione_altimu_temp_cisn = 0;
+  }
+}
+
+void wyswietlanie()
+{
+  Serial.print("Temperatura_SHT: ");
+  Serial.print(temperatura_SHT);
+  Serial.print("*C Wilgotnosc: ");
+  Serial.print(wilgotnosc);
+  Serial.print("% Temperatura_DS18B20: ");
+  Serial.print(temperatura_DS18B20);
+  Serial.println("*C");
+  Serial.print("Czas: ");
+  Serial.print(godzina);
+  Serial.print(":");
+  Serial.print(minuta);
+  Serial.print(":");
+  Serial.print(sekunda);
+  Serial.print(" Data: ");
+  Serial.print(dzien);
+  Serial.print(".");
+  Serial.print(miesiac);
+  Serial.print(".");
+  Serial.print(rok);
+  Serial.print(" Fix: ");
+  Serial.print(fix);
+  Serial.print(" Quality: ");
+  Serial.print(quality);
+  Serial.print(" Lokalizacja: ");
+  Serial.print(lokalizacja[0], 4);
+  Serial.print(lokalizacja_znak[0]);
+  Serial.print(" ");
+  Serial.print(lokalizacja[1], 4);
+  Serial.println(lokalizacja_znak[1]);
+  Serial.print("Szybkosc (wezly): ");
+  Serial.print(szybkosc_wezly);
+  Serial.print(" Kat: ");
+  Serial.print(kat);
+  Serial.print(" Wysokosc: ");
+  Serial.print(wysokosc);
+  Serial.print(" Liczba satelit: ");
+  Serial.println(liczba_satelit);
+  Serial.print("Akcelerometr: ");
+  Serial.print(akcelerometr[0]);
+  Serial.print(" ");
+  Serial.print(akcelerometr[1]);
+  Serial.print(" ");
+  Serial.print(akcelerometr[2]);
+  Serial.print(" Zyroskop: ");
+  Serial.print(zyroskop[0]);
+  Serial.print(" ");
+  Serial.print(zyroskop[1]);
+  Serial.print(" ");
+  Serial.print(zyroskop[2]);
+  Serial.print(" Magnetometr: ");
+  Serial.print(magnetometr[0]);
+  Serial.print(" ");
+  Serial.print(magnetometr[1]);
+  Serial.print(" ");
+  Serial.println(magnetometr[2]);
+  Serial.print("Temperatura_AltIMU: ");
+  Serial.print(temperatura_altimu);
+  Serial.print("*C Cisnienie_AltIMU: ");
+  Serial.print(cisnienie_altimu);
+  Serial.print("hPa Spis_dzialajacych: ");
+  Serial.print(spis_dzialajacych);
+  Serial.print(" Stan baterii: ");
+  Serial.println(napiecie_baterii);
+}
+
+void wysylanie()
+{
+  digitalWrite(pin_cs_nadajnik, LOW);
+
+  int dlugosc_gotowego_tekstu = 0;
+
+  char godzina_100[5];
+  int liczba_cyfr_100_godzina;
+  int_to_char_100(godzina, godzina_100, liczba_cyfr_100_godzina);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_godzina + 1;
+
+  char minuta_100[5];
+  int liczba_cyfr_100_minuta;
+  int_to_char_100(minuta, minuta_100, liczba_cyfr_100_minuta);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_minuta + 1;
+
+  char sekunda_100[5];
+  int liczba_cyfr_100_sekunda;
+  int_to_char_100(sekunda, sekunda_100, liczba_cyfr_100_sekunda);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_sekunda + 1;
+
+  char lokalizacja_100[2][10];
+  int liczba_cyfr_100_lokalizacja[2];
+  double_to_char_100(lokalizacja[0], lokalizacja_100[0], 4, liczba_cyfr_100_lokalizacja[0]);
+  double_to_char_100(lokalizacja[1], lokalizacja_100[1], 4, liczba_cyfr_100_lokalizacja[1]);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_lokalizacja[0] + 1;
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_lokalizacja[1] + 1;
+
+  char wysokosc_100[7];
+  int liczba_cyfr_100_wysokosc;
+  double_to_char_100(wysokosc, wysokosc_100, 2, liczba_cyfr_100_wysokosc);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_wysokosc + 1;
+
+  char temperatura_DS18B20_100[7];
+  int liczba_cyfr_100_temperatura_DS18B20;
+  double_to_char_100(temperatura_DS18B20, temperatura_DS18B20_100, 2, liczba_cyfr_100_temperatura_DS18B20);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_DS18B20 + 1;
+
+  char temperatura_SHT_100[7];
+  int liczba_cyfr_100_temperatura_SHT;
+  double_to_char_100(temperatura_SHT, temperatura_SHT_100, 2, liczba_cyfr_100_temperatura_SHT);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_SHT + 1;
+
+  char wilgotnosc_100[7];
+  int liczba_cyfr_100_wilgotnosc;
+  double_to_char_100(wilgotnosc, wilgotnosc_100, 2, liczba_cyfr_100_wilgotnosc);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_wilgotnosc + 1;
+
+  char akcelerometr_100[3][7];
+  int liczba_cyfr_100_akcelerometr[3];
+  double_to_char_100(akcelerometr[0], akcelerometr_100[0], 2, liczba_cyfr_100_akcelerometr[0]);
+  double_to_char_100(akcelerometr[1], akcelerometr_100[1], 2, liczba_cyfr_100_akcelerometr[1]);
+  double_to_char_100(akcelerometr[2], akcelerometr_100[2], 2, liczba_cyfr_100_akcelerometr[2]);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[0] + 1;
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[1] + 1;
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[2] + 1;
+
+  char zyroskop_100[3][7];
+  int liczba_cyfr_100_zyroskop[3];
+  double_to_char_100(zyroskop[0], zyroskop_100[0], 2, liczba_cyfr_100_zyroskop[0]);
+  double_to_char_100(zyroskop[1], zyroskop_100[1], 2, liczba_cyfr_100_zyroskop[1]);
+  double_to_char_100(zyroskop[2], zyroskop_100[2], 2, liczba_cyfr_100_zyroskop[2]);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[0] + 1;
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[1] + 1;
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[2] + 1;
+
+  char magnetometr_100[3][7];
+  int liczba_cyfr_100_magnetometr[3];
+  double_to_char_100(magnetometr[0], magnetometr_100[0], 2, liczba_cyfr_100_magnetometr[0]);
+  double_to_char_100(magnetometr[1], magnetometr_100[1], 2, liczba_cyfr_100_magnetometr[1]);
+  double_to_char_100(magnetometr[2], magnetometr_100[2], 2, liczba_cyfr_100_magnetometr[2]);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[0] + 1;
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[1] + 1;
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[2] + 1;
+
+  char temperatura_altimu_100[7];
+  int liczba_cyfr_100_temperatura_altimu;
+  double_to_char_100(temperatura_altimu, temperatura_altimu_100, 2, liczba_cyfr_100_temperatura_altimu);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_altimu + 1;
+
+  char cisnienie_altimu_100[7];
+  int liczba_cyfr_100_cisnienie_altimu;
+  double_to_char_100(cisnienie_altimu, cisnienie_altimu_100, 2, liczba_cyfr_100_cisnienie_altimu);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_cisnienie_altimu + 1;
+
+  char wilgotnosc_ziemi_100[7];
+  int liczba_cyfr_100_wilgotnosc_ziemi;
+  double_to_char_100(wilgotnosc_ziemi, wilgotnosc_ziemi_100, 2, liczba_cyfr_100_wilgotnosc_ziemi);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_wilgotnosc_ziemi + 1;
+
+  char spis_dzialajacych_100[5];
+  int liczba_cyfr_100_spis_dzialajacych;
+  int_to_char_100(spis_dzialajacych, spis_dzialajacych_100, liczba_cyfr_100_spis_dzialajacych);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_spis_dzialajacych + 1;
+
+  char napiecie_baterii_100[5];
+  int liczba_cyfr_100_napiecie_baterii;
+  double_to_char_100(napiecie_baterii, napiecie_baterii_100, 2, liczba_cyfr_100_napiecie_baterii);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_napiecie_baterii + 1;
+
+  char opis_dzialania_100[7];
+  int liczba_cyfr_100_opis_dzialania;
+  int_to_char_100(opis_dzialania, opis_dzialania_100, liczba_cyfr_100_opis_dzialania);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_opis_dzialania + 1;
+
+  char RSSI_cansat_100[7];
+  int liczba_cyfr_100_RSSI_cansat;
+  int_to_char_100(RSSI_cansat, RSSI_cansat_100, liczba_cyfr_100_RSSI_cansat);
+  dlugosc_gotowego_tekstu += liczba_cyfr_100_RSSI_cansat + 1;
+
+  char gotowy_tekst[dlugosc_gotowego_tekstu + 1];
+
+  int nr_znaku = 0;
+
+  dopisywanie_gotowy_tekst(gotowy_tekst, godzina_100, liczba_cyfr_100_godzina, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, minuta_100, liczba_cyfr_100_minuta, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, sekunda_100, liczba_cyfr_100_sekunda, nr_znaku, 0);
+  if (lokalizacja_znak[0] == 'N')
+  {
+    gotowy_tekst[nr_znaku] = 16;
+  }
+  else                    //'S'
+  {
+    gotowy_tekst[nr_znaku] = 17;
+  }
+  dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_100[0], liczba_cyfr_100_lokalizacja[0], nr_znaku, 2);
+  if (lokalizacja_znak[1] == 'W')
+  {
+    gotowy_tekst[nr_znaku] = 16;
+  }
+  else                    //'E'
+  {
+    gotowy_tekst[nr_znaku] = 17;
+  }
+  dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_100[1], liczba_cyfr_100_lokalizacja[1], nr_znaku, 2);
+  dopisywanie_gotowy_tekst(gotowy_tekst, wysokosc_100, liczba_cyfr_100_wysokosc, nr_znaku, ujemna_sprawdz(wysokosc));
+  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_DS18B20_100, liczba_cyfr_100_temperatura_DS18B20, nr_znaku, ujemna_sprawdz(temperatura_DS18B20));
+  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_SHT_100, liczba_cyfr_100_temperatura_SHT, nr_znaku, ujemna_sprawdz(temperatura_SHT));
+  dopisywanie_gotowy_tekst(gotowy_tekst, wilgotnosc_100, liczba_cyfr_100_wilgotnosc, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[0], liczba_cyfr_100_akcelerometr[0], nr_znaku, ujemna_sprawdz(akcelerometr[0]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[1], liczba_cyfr_100_akcelerometr[1], nr_znaku, ujemna_sprawdz(akcelerometr[1]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[2], liczba_cyfr_100_akcelerometr[2], nr_znaku, ujemna_sprawdz(akcelerometr[2]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[0], liczba_cyfr_100_zyroskop[0], nr_znaku, ujemna_sprawdz(zyroskop[0]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[1], liczba_cyfr_100_zyroskop[1], nr_znaku, ujemna_sprawdz(zyroskop[1]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[2], liczba_cyfr_100_zyroskop[2], nr_znaku, ujemna_sprawdz(zyroskop[2]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[0], liczba_cyfr_100_magnetometr[0], nr_znaku, ujemna_sprawdz(magnetometr[0]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[1], liczba_cyfr_100_magnetometr[1], nr_znaku, ujemna_sprawdz(magnetometr[1]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[2], liczba_cyfr_100_magnetometr[2], nr_znaku, ujemna_sprawdz(magnetometr[2]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_altimu_100, liczba_cyfr_100_temperatura_altimu, nr_znaku, ujemna_sprawdz(temperatura_altimu));
+  dopisywanie_gotowy_tekst(gotowy_tekst, cisnienie_altimu_100, liczba_cyfr_100_cisnienie_altimu, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, wilgotnosc_ziemi_100, liczba_cyfr_100_wilgotnosc_ziemi, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, spis_dzialajacych_100, liczba_cyfr_100_spis_dzialajacych, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, napiecie_baterii_100, liczba_cyfr_100_napiecie_baterii, nr_znaku, ujemna_sprawdz(napiecie_baterii));
+  dopisywanie_gotowy_tekst(gotowy_tekst, opis_dzialania_100, liczba_cyfr_100_opis_dzialania, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, RSSI_cansat_100, liczba_cyfr_100_RSSI_cansat, nr_znaku, ujemna_sprawdz(RSSI_cansat));
+
+  gotowy_tekst[dlugosc_gotowego_tekstu] = '\0';
+
+  Serial.println(gotowy_tekst);
+  Serial.print("Dlugosc gotowego tekstu: ");
+  Serial.println(dlugosc_gotowego_tekstu);
+
+  rf95.send((uint8_t *)gotowy_tekst, dlugosc_gotowego_tekstu + 1);
+  poczatek = millis();
+  rf95.waitPacketSent();
+  koniec = millis();
+  Serial.print("Czas wykonania czakanie na wyslanie: ");
+  Serial.println(koniec - poczatek);
+
+  digitalWrite(pin_cs_nadajnik, HIGH);
+}
+
+void oczekiwanie_na_odpowiedz()
+{
+  uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+  uint8_t len = sizeof(buf);
+
+  if (rf95.waitAvailableTimeout(200))
+  {
+    if (rf95.recv(buf, &len))
+    {
+      Serial.print("Got reply: ");
+      Serial.println((char*)buf);
+      RSSI_cansat = rf95.lastRssi();
+    }
+    else
+    {
+      RSSI_cansat = 0;
+      Serial.println("Brak sygnalu1");
+    }
+  }
+  else
+  {
+    RSSI_cansat = 0;
+    Serial.println("Brak sygnalu2");
+  }
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  Serial.println("start");
+
+  Serial.println("Inicjalizacja biblioteki Wire");
+  Wire.begin(); //zainicjowanie biblioteki wire
+
+  sht3x.begin();//inicjalizacja SHT
+
+  if (!sht3x.softReset())
+  {
+    znalezione_SHT = 0;
+  }
+
+  Serial.println("Inicjalizacja AltIMU (zyroskop i akcelerometr)");
+  imu.init();//zainicjowanie AltIMU-10 (zyroskop i akcelerometr)
+  imu.enableDefault();//zainicjowanie AltIMU-10 (zyroskop i akcelerometr)
+
+  Serial.println("Inicjalizacja AltIMU (magnetometr)");
+  mag.init();//zainicjowanie AltIMU-10 (magnetometr)
+  mag.enableDefault();//zainicjowanie AltIMU-10 (magnetometr)
+
+  Serial.println("Inicjalizacja AltIMU (temperatura i cisnienie)");
+  ps.init();//zainicjowanie AltIMU-10 (temperatura i cisnienie)
+  ps.enableDefault();//zainicjowanie AltIMU-10 (temperatura i cisnienie)
+
+  GPS.begin(9600);
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  GPS.sendCommand(PGCMD_ANTENNA);
+  delay(1000);
+  GPSSerial.println(PMTK_Q_RELEASE);
+
+  SPI.begin(); //inicjowanie komunikacji SPI
+
+  pinMode(pin_cs_nadajnik, OUTPUT);
+  digitalWrite(pin_cs_nadajnik, HIGH);
+
+
+  pinMode(pin_cs_SD, OUTPUT);
+  digitalWrite(pin_cs_SD, LOW);
+
+  if (!SD.begin(pin_cs_SD))
+  {
+    Serial.println("Nie znaleziono karty SD");
+    znalezione_SD = 0;
+  }
+  else
+  {
+    Serial.println("Znaleziono karte SD");
+    znalezione_SD = 1;
+  }
+  digitalWrite(pin_cs_SD, HIGH);
+
+  //reset nadajnika
+  digitalWrite(pin_RST_nadajnik, LOW);
+  delay(10);
+  digitalWrite(pin_RST_nadajnik, HIGH);
+  delay(10);
+
+  if (!rf95.init())
+  {
+    Serial.println("Nie odnaleziono nadajnika!");
+    znalezione_nadajnik = 0;
+  }
+  else
+  {
+    Serial.println("Znaleziono nadajnik");
+    znalezione_nadajnik = 1;
+  }
+  if (znalezione_nadajnik == 1)
+  {
+    if (!rf95.setFrequency(czestotliwosc_nadajnika))
+    {
+      Serial.println("Nie mozna ustawic podanej czestotliwosci");
+      znalezione_nadajnik = 0;
+    }
+    else
+    {
+      Serial.print("Czestotliwosc ustawiona na: ");
+      Serial.println(czestotliwosc_nadajnika);
+    }
+    if (znalezione_nadajnik == 1)
+    {
+      rf95.setTxPower(23, false);
+    }
+  }
+
+}
+
+void loop()
+{
+  odczytywanie_stale_gps();
+
+  if (millis() - timer > 1000)
+  {
+    digitalWrite(13, HIGH);
+
+    poczatek_calkowity = millis();
+    timer = millis(); // reset the timer
+
+    temperatura_SHT = 0;
+    wilgotnosc = 0;
+    temperatura_DS18B20 = 0;
+    godzina = 0;
+    minuta = 0;
+    sekunda = 0;
+    dzien = 0;
+    miesiac = 0;
+    rok = 0;
+    fix = 0;
+    quality = 0;
+    lokalizacja[0] = 0;
+    lokalizacja[1] = 0;
+    lokalizacja_znak[0] = ' ';
+    lokalizacja_znak[1] = ' ';
+    szybkosc_wezly = 0;
+    kat = 0;
+    wysokosc = 0;
+    liczba_satelit = 0;
+    akcelerometr[0] = 0;
+    akcelerometr[1] = 0;
+    akcelerometr[2] = 0;
+    zyroskop[0] = 0;
+    zyroskop[1] = 0;
+    zyroskop[2] = 0;
+    magnetometr[0] = 0;
+    magnetometr[1] = 0;
+    magnetometr[2] = 0;
+    temperatura_altimu = 0;
+    cisnienie_altimu = 0;
+    wilgotnosc_ziemi = 0;
+
+    spis_dzialajacych = 0;
+    napiecie_baterii = 0;
+    opis_dzialania = 0;
+
+    poczatek = millis();
+    odczytywanie_gps();
+    koniec = millis();
+    Serial.print("Czas wykonania GPS: ");
+    Serial.println(koniec - poczatek);
+
+    poczatek = millis();
+    odczytywanie_SHT();
+    koniec = millis();
+    Serial.print("Czas wykonania SHT: ");
+    Serial.println(koniec - poczatek);
+
+    poczatek = millis();
+    odczytywanie_DS18B20();
+    koniec = millis();
+    Serial.print("Czas wykonania DS18B20: ");
+    Serial.println(koniec - poczatek);
+
+    poczatek = millis();
+    odczytywanie_altimu();
+    koniec = millis();
+    Serial.print("Czas wykonania AltIMU: ");
+    Serial.println(koniec - poczatek);
+
+    tworzenie_spisu_dzialajacych();
+
+    mierzenie_napiecia_baterii();
+
+    poczatek = millis();
+    wyswietlanie();
+    koniec = millis();
+    Serial.print("Czas wykonania wyswietlanie: ");
+    Serial.println(koniec - poczatek);
+
+    poczatek = millis();
+    if (znalezione_SD == 1)
+    {
+      zapisywanie_SD();
+    }
+    koniec = millis();
+    Serial.print("Czas wykonania SD: ");
+    Serial.println(koniec - poczatek);
+
+    poczatek = millis();
+    if (znalezione_nadajnik == 1)
+    {
+      wysylanie();
+      oczekiwanie_na_odpowiedz();
+    }
+    koniec = millis();
+    Serial.print("Czas wykonania wysylanie: ");
+    Serial.println(koniec - poczatek);
+
+    koniec_calkowity = millis();
+    Serial.print("Czas wykonania programu: ");
+    Serial.println(koniec_calkowity - poczatek_calkowity);
+
+    digitalWrite(13, LOW);
+  }
+}
