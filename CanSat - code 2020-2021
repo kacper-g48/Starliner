@@ -202,12 +202,6 @@ uint32_t koniec;
   MA2 - SILNIK -
 */
 
-//Silnik - odczepianie spadochronu
-/*
-
-*/
-
-
 int potega(int liczba, int potega)
 {
   if (potega == 0)
