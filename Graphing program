@@ -1,0 +1,2174 @@
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
+#include <SDL2/SDL_mixer.h>
+#include <SDL2/SDL_ttf.h>
+
+#include <iostream>
+#include <time.h>
+#include <cstdlib>
+#include <sstream>
+#include <cmath>
+
+#include <windows.h>
+#include <tchar.h>
+#include <stdio.h>
+#include <future>
+
+using namespace std;
+
+class klasa_myszka
+{
+public:
+    int x;
+    int y;
+    int ruch_x;
+    int ruch_y;
+
+    klasa_myszka()
+    {
+        x = 0;
+        y = 0;
+        ruch_x = 0;
+        ruch_y = 0;
+    }
+    ~klasa_myszka()
+    {
+        ;
+    }
+};
+
+//ZMIENNE GLOBALNE
+SDL_Window *okno;
+SDL_Renderer *ekran;
+
+SDL_Rect rect_okno;
+
+int godzina = 0;
+int minuta = 0;
+int sekunda = 0;
+double lokalizacja[2] = {0, 0};
+char lokalizacja_znak[2] = {' ', ' '};
+double wysokosc = 0;
+double temperatura_DS18B20 = 0;
+double temperatura_SHT = 0;
+double wilgotnosc = 0;
+double akcelerometr[3] = {0, 0, 0};
+double zyroskop[3] = {0, 0, 0};
+double magnetometr[3] = {0, 0, 0};
+double temperatura_altimu = 0;
+double cisnienie_altimu = 0;
+double wilgotnosc_ziemi = 0;
+int spis_dzialajacych = 0;
+double napiecie_baterii = 0;
+int opis_dzialania = 0;
+int RSSI_cansat = 0;
+double lokalizacja_stacja[2] = {0, 0};
+char lokalizacja_znak_stacja[2] = {' ', ' '};
+double temperatura_altimu_stacja = 0;
+double cisnienie_altimu_stacja = 0;
+double roznica_wysokosci = 0;
+double odleglosc_prosta = 0;
+double odleglosc_calkowita = 0;
+double kat_wysokosc = 0;
+double kat_obrot = 0;
+int spis_dzialajacych_stacja = 0;
+int RSSI_stacja = 0;
+
+TTF_Font* czcionka_12;
+TTF_Font* czcionka_16;
+
+klasa_myszka rect_myszka;
+
+SDL_Cursor *kursor_tradycyjny;              //0
+SDL_Cursor *kursor_reka_klik;               //1
+SDL_Cursor *kursor_strzalka_ukos_malejacy;  //1
+SDL_Cursor *kursor_strzalka_ukos_rosnacy;   //3
+SDL_Cursor *kursor_strzalka_poziom;         //4
+SDL_Cursor *kursor_strzalka_pion;           //5
+SDL_Cursor *kursor_wpisywanie_tekstu;       //6
+SDL_Cursor *kursor_przesuwanie;             //7
+
+int aktualny_wyglad_kursora = 0;
+
+HANDLE hSerial = CreateFile ("\\\\.\\COM12", GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+//KONIEC ZMIENNYCH GLOBALNYCH
+
+bool sprawdzanie_czy_najechala_myszka(int x, int y, int w, int h)
+{
+    if(rect_myszka.x > x && rect_myszka.x < x+w && rect_myszka.y > y && rect_myszka.y < y+h)
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+void przesuwanie_obiektu(int &nowe_x, int &nowe_y, int x, int y, int w, int h, int ograniczenie_prawo, int ograniczenie_lewo, int ograniczenie_gora, int ograniczenie_dol)
+{
+    int nowe_x_obiekt = x + rect_myszka.ruch_x;
+
+    if(nowe_x_obiekt < ograniczenie_lewo)
+    {
+        nowe_x = ograniczenie_lewo;
+    }
+    else if(nowe_x_obiekt + w > ograniczenie_prawo)
+    {
+        nowe_x = ograniczenie_prawo - w;
+    }
+    else
+    {
+        nowe_x = nowe_x_obiekt;
+    }
+
+    int nowe_y_obiekt = y + rect_myszka.ruch_y;
+
+    if(nowe_y_obiekt  < ograniczenie_gora)
+    {
+        nowe_y = ograniczenie_gora;
+    }
+    else if(nowe_y_obiekt + h > ograniczenie_dol)
+    {
+        nowe_y = ograniczenie_dol - h;
+    }
+    else
+    {
+        nowe_y = nowe_y_obiekt;
+    }
+}
+
+void tekst_to_texture(SDL_Texture* &obraz_napis, string tekst, Uint8 r, Uint8 g, Uint8 b, int wielkosc_czcionki)
+{
+    SDL_Color kolor = {r, g, b};
+
+    SDL_Surface* surface_napis;
+
+    switch(wielkosc_czcionki)
+    {
+    case 16:
+        {
+            surface_napis = TTF_RenderText_Blended(czcionka_16, tekst.c_str(), kolor);
+        }
+    case 12:
+    default:
+        {
+            surface_napis = TTF_RenderText_Blended(czcionka_12, tekst.c_str(), kolor);
+        }
+    }
+
+    obraz_napis = SDL_CreateTextureFromSurface(ekran, surface_napis);
+
+    SDL_FreeSurface(surface_napis);
+}
+
+SDL_Texture* surface_to_texture(string sciezka)
+{
+    SDL_Texture *obraz;
+    SDL_Surface *obraz_render;
+    obraz_render = IMG_Load(sciezka.c_str());
+    obraz = SDL_CreateTextureFromSurface(ekran, obraz_render);
+    SDL_FreeSurface(obraz_render);
+    return obraz;
+}
+
+class klasa_obraz
+{
+protected:
+    SDL_Texture *obraz_obraz;
+    SDL_Rect rect_obraz;
+
+public:
+    klasa_obraz(string sciezka, int rect_x, int rect_y, int rect_w, int rect_h)
+    {
+        obraz_obraz = surface_to_texture(sciezka);
+        rect_obraz.x = rect_x;
+        rect_obraz.y = rect_y;
+        rect_obraz.w = rect_w;
+        rect_obraz.h = rect_h;
+    }
+
+    ~klasa_obraz()
+    {
+        SDL_DestroyTexture(obraz_obraz);
+    }
+
+    void wyswietlanie_obrazu()
+    {
+        SDL_RenderCopy(ekran, obraz_obraz, NULL, &rect_obraz);
+    }
+
+    void wyswietlanie_obrazu_inne_wspolrzedne(int x, int y)
+    {
+        rect_obraz.x = x;
+        rect_obraz.y = y;
+        wyswietlanie_obrazu();
+    }
+
+    void zmiana_wspolrzednych(int x, int y)
+    {
+        rect_obraz.x = x;
+        rect_obraz.y = y;
+    }
+
+    void wyswietlanie_obrazu_z_obrotem(int kat_obrotu)
+    {
+        SDL_RenderCopyEx(ekran, obraz_obraz, NULL, &rect_obraz, kat_obrotu, NULL, SDL_FLIP_NONE);
+    }
+};
+
+class klasa_tekst
+{
+private:
+    SDL_Texture *obraz_tekst;
+    SDL_Rect rect_tekst;
+public:
+    klasa_tekst(string tekst, int x, int y, Uint8 r, Uint8 g, Uint8 b, int wielkosc_czcionki)
+    {
+        tekst_to_texture(obraz_tekst, tekst, r, g, b, wielkosc_czcionki);
+
+        SDL_QueryTexture(obraz_tekst, NULL, NULL, &(rect_tekst.w), &(rect_tekst.h));
+        rect_tekst.x = x;
+        rect_tekst.y = y;
+
+        cout<<rect_tekst.w<<" "<<rect_tekst.h<<endl;
+    }
+
+    ~klasa_tekst()
+    {
+        SDL_DestroyTexture(obraz_tekst);
+    }
+
+    void wyswietlanie_tekstu()
+    {
+        SDL_RenderCopy(ekran, obraz_tekst, NULL, &rect_tekst);
+    }
+
+    void zmiana_polozenia_tekstu(int x, int y)
+    {
+        rect_tekst.x = x;
+        rect_tekst.y = y;
+    }
+};
+
+class klasa_przycisk
+{
+private:
+    SDL_Rect rect_przycisk;
+    SDL_Rect rect_obramowka;
+    SDL_Texture *obraz_tekst;
+    SDL_Rect rect_tekst;
+
+public:
+    klasa_przycisk(int x, int y, int w, int h, string tekst)
+    {
+        rect_przycisk.x = x;
+        rect_przycisk.y = y;
+        rect_przycisk.w = w;
+        rect_przycisk.h = h;
+
+        rect_obramowka.x = rect_przycisk.x + 2;
+        rect_obramowka.y = rect_przycisk.y + 2;
+        rect_obramowka.w = rect_przycisk.w - 4;
+        rect_obramowka.h = rect_przycisk.h - 4;
+
+        tekst_to_texture(obraz_tekst, tekst, 0, 0, 0, 12);
+        SDL_QueryTexture(obraz_tekst, NULL, NULL, &(rect_tekst.w), &(rect_tekst.h));
+        rect_tekst.x = rect_przycisk.x + rect_przycisk.w/2 - rect_tekst.w/2;
+        rect_tekst.y = rect_przycisk.y + rect_przycisk.h/2 - rect_tekst.h/2;
+    }
+
+    ~klasa_przycisk()
+    {
+        SDL_DestroyTexture(obraz_tekst);
+    }
+
+    void wyswietlanie_przycisku()
+    {
+        SDL_SetRenderDrawColor(ekran, 169, 169, 169, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(ekran, &rect_przycisk);
+
+        SDL_SetRenderDrawColor(ekran, 105, 105, 105, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawRect(ekran, &rect_obramowka);
+
+        SDL_RenderCopy(ekran, obraz_tekst, NULL, &rect_tekst);
+    }
+
+    void zmiana_polozenia_przycisku(int x, int y)
+    {
+        rect_przycisk.x = x;
+        rect_przycisk.y = y;
+
+        rect_obramowka.x = rect_przycisk.x + 2;
+        rect_obramowka.y = rect_przycisk.y + 2;
+
+        rect_tekst.x = rect_przycisk.x + rect_przycisk.w/2 - rect_tekst.w/2;
+        rect_tekst.y = rect_przycisk.y + rect_przycisk.h/2 - rect_tekst.h/2;
+    }
+};
+
+class klasa_wykres
+{
+protected:
+    bool widoczny_wykres;
+    bool widoczny_tekst;
+    SDL_Point tablica_wspolrzednych[600];
+    SDL_Rect rect_wykres;
+    int liczba_wyswietlanych_punktow;
+    SDL_Texture* obraz_opis_osi_x[12];
+    SDL_Texture* obraz_opis_osi_y[5];
+    SDL_Texture* obraz_napis_os_x;
+    SDL_Texture* obraz_napis_os_y;
+    int odleglosc_od_krawedzi_prawej;
+    int odleglosc_od_krawedzi_lewej;
+    int odleglosc_od_krawedzi_gornej;
+    int odleglosc_od_krawedzi_dolnej;
+    SDL_Rect rect_napis;
+    SDL_Texture *obraz_napis;
+    string napis;
+    int wielkosc_czcionki_napisu;
+
+public:
+    klasa_wykres()
+    {
+        widoczny_wykres = false;
+        widoczny_tekst = false;
+
+        for(int i=0; i<600; i++)
+        {
+            tablica_wspolrzednych[i].x = 1;
+            tablica_wspolrzednych[i].y = 1;
+        }
+
+        rect_wykres.x = 400;
+        rect_wykres.y = 50;
+        rect_wykres.w = 180;
+        rect_wykres.h = 100;
+
+        liczba_wyswietlanych_punktow = rect_wykres.w;
+        odleglosc_od_krawedzi_prawej = 20;
+        odleglosc_od_krawedzi_lewej = 75;
+        odleglosc_od_krawedzi_gornej = 20;
+        odleglosc_od_krawedzi_dolnej = 40;
+
+        rect_napis.x = 100;
+        rect_napis.y = 100;
+        rect_napis.w = 100;
+        rect_napis.h = 100;
+
+        wielkosc_czcionki_napisu = 16;
+    }
+
+    ~klasa_wykres()
+    {
+        for(int i=0; i<12; i++)
+        {
+            SDL_DestroyTexture(obraz_opis_osi_x[i]);
+        }
+        for(int i=0; i<5; i++)
+        {
+            SDL_DestroyTexture(obraz_opis_osi_y[i]);
+        }
+        SDL_DestroyTexture(obraz_napis_os_x);
+        SDL_DestroyTexture(obraz_napis_os_y);
+
+        SDL_DestroyTexture(obraz_napis);
+    }
+
+    void przygotowywanie_obiektu(string napis_os_y, string napis_os_x)
+    {
+        string opis_osi_x[12] = {"50", "100", "150", "200", "250", "300", "350", "400", "450", "500", "550", "600"};
+        for(int i=0; (i+1)*50<=600; i++)
+        {
+            tekst_to_texture(obraz_opis_osi_x[i], opis_osi_x[i], 255, 255, 255, 12);
+        }
+
+        tekst_to_texture(obraz_napis_os_x, napis_os_x, 255, 255, 255, 12);
+        tekst_to_texture(obraz_napis_os_y, napis_os_y, 255, 255, 255, 12);
+
+        napis = napis_os_y + ": ";
+        tekst_to_texture(obraz_napis, napis+"-", 255, 255, 255, wielkosc_czcionki_napisu);
+        SDL_QueryTexture(obraz_napis, NULL, NULL, &rect_napis.w, &rect_napis.h);
+    }
+
+    void wyswietlanie_linie_pomocnicze_poziome()
+    {
+        SDL_SetRenderDrawColor(ekran, 128, 128, 128, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawLine(ekran, rect_wykres.x, rect_wykres.y, rect_wykres.x+liczba_wyswietlanych_punktow, rect_wykres.y);
+        SDL_RenderDrawLine(ekran, rect_wykres.x, rect_wykres.y+rect_wykres.h/4, rect_wykres.x+liczba_wyswietlanych_punktow, rect_wykres.y+rect_wykres.h/4);
+        SDL_RenderDrawLine(ekran, rect_wykres.x, rect_wykres.y+rect_wykres.h*2/4, rect_wykres.x+liczba_wyswietlanych_punktow, rect_wykres.y+rect_wykres.h*2/4);
+        SDL_RenderDrawLine(ekran, rect_wykres.x, rect_wykres.y+rect_wykres.h*3/4, rect_wykres.x+liczba_wyswietlanych_punktow, rect_wykres.y+rect_wykres.h*3/4);
+    }
+
+    void wyswietlanie_osie_wykresu()
+    {
+        SDL_SetRenderDrawColor(ekran, 255, 255, 255, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawLine(ekran, rect_wykres.x, rect_wykres.y+rect_wykres.h, rect_wykres.x+liczba_wyswietlanych_punktow+5, rect_wykres.y+rect_wykres.h);
+        SDL_RenderDrawLine(ekran, rect_wykres.x, rect_wykres.y+rect_wykres.h, rect_wykres.x, rect_wykres.y-10);
+
+        SDL_RenderDrawLine(ekran, rect_wykres.x+liczba_wyswietlanych_punktow+5, rect_wykres.y+rect_wykres.h, rect_wykres.x+liczba_wyswietlanych_punktow-5, rect_wykres.y+rect_wykres.h-5);
+        SDL_RenderDrawLine(ekran, rect_wykres.x+liczba_wyswietlanych_punktow+5, rect_wykres.y+rect_wykres.h, rect_wykres.x+liczba_wyswietlanych_punktow-5, rect_wykres.y+rect_wykres.h+5);
+        SDL_RenderDrawLine(ekran, rect_wykres.x, rect_wykres.y-10, rect_wykres.x-5, rect_wykres.y);
+        SDL_RenderDrawLine(ekran, rect_wykres.x, rect_wykres.y-10, rect_wykres.x+5, rect_wykres.y);
+    }
+
+    void wyswietlanie_opis_osi_x()
+    {
+        for(int i=0; (i+1)*50<=liczba_wyswietlanych_punktow; i++)
+        {
+            SDL_Rect rect_opis_osi_x;
+
+            SDL_QueryTexture(obraz_opis_osi_x[i], NULL, NULL, &(rect_opis_osi_x.w), &(rect_opis_osi_x.h));
+            rect_opis_osi_x.x = rect_wykres.x+(i+1)*50 - rect_opis_osi_x.w/2;
+            rect_opis_osi_x.y = rect_wykres.y+rect_wykres.h+7;
+
+            SDL_RenderCopy(ekran, obraz_opis_osi_x[i], NULL, &rect_opis_osi_x);
+        }
+    }
+
+    void wyswietlanie_opis_osi_y()
+    {
+        for(int i=0; i<5; i++)
+        {
+            SDL_Rect rect_opis_osi_y;
+
+            SDL_QueryTexture(obraz_opis_osi_y[i], NULL, NULL, &(rect_opis_osi_y.w), &(rect_opis_osi_y.h));
+            rect_opis_osi_y.x = rect_wykres.x - 7 - rect_opis_osi_y.w;
+            rect_opis_osi_y.y = rect_wykres.y + rect_wykres.h - rect_wykres.h*i/4-5;
+
+            SDL_RenderCopy(ekran, obraz_opis_osi_y[i], NULL, &rect_opis_osi_y);
+        }
+    }
+
+    void wyswietlanie_linie_wykresu()
+    {
+        int licznik_narysowanych_punktow = 600 - liczba_wyswietlanych_punktow;
+        int licznik_punktow_z_rzedu = 1;
+
+        SDL_SetRenderDrawColor(ekran, 255, 0, 0, SDL_ALPHA_OPAQUE);
+
+        while(licznik_narysowanych_punktow + licznik_punktow_z_rzedu < 600)
+        {
+            while(licznik_narysowanych_punktow < 600 && tablica_wspolrzednych[licznik_narysowanych_punktow].x == 1 && tablica_wspolrzednych[licznik_narysowanych_punktow].y == 1)
+            {
+                licznik_narysowanych_punktow++;
+            }
+
+            licznik_punktow_z_rzedu = 1;
+            while(licznik_narysowanych_punktow + licznik_punktow_z_rzedu < 600 && tablica_wspolrzednych[licznik_narysowanych_punktow+licznik_punktow_z_rzedu].x != 1 && tablica_wspolrzednych[licznik_narysowanych_punktow+licznik_punktow_z_rzedu].y != 1)
+            {
+                licznik_punktow_z_rzedu++;
+            }
+
+            if(licznik_punktow_z_rzedu > 1)
+            {
+                SDL_RenderDrawLines(ekran, tablica_wspolrzednych+licznik_narysowanych_punktow, licznik_punktow_z_rzedu);
+            }
+            else if(licznik_punktow_z_rzedu == 1)
+            {
+                SDL_RenderDrawPoint(ekran, tablica_wspolrzednych[licznik_narysowanych_punktow].x, tablica_wspolrzednych[licznik_narysowanych_punktow].y);
+            }
+
+            licznik_narysowanych_punktow += licznik_punktow_z_rzedu;
+        }
+    }
+
+    void wyswietlanie_napisy_osie()
+    {
+        SDL_Rect rect_napis_os_x;
+        SDL_QueryTexture(obraz_napis_os_x, NULL, NULL, &(rect_napis_os_x.w), &(rect_napis_os_x.h));
+        rect_napis_os_x.x = rect_wykres.x + rect_wykres.w/2 - rect_napis_os_x.w/2;
+        rect_napis_os_x.y = rect_wykres.y + rect_wykres.h + 22;
+        SDL_RenderCopy(ekran, obraz_napis_os_x, NULL, &rect_napis_os_x);
+
+        SDL_Rect rect_napis_os_y;
+        SDL_QueryTexture(obraz_napis_os_y, NULL, NULL, &(rect_napis_os_y.w), &(rect_napis_os_y.h));
+        rect_napis_os_y.x = rect_wykres.x - 60 - rect_napis_os_y.w/2;
+        rect_napis_os_y.y = rect_wykres.y + rect_wykres.h/2;
+        SDL_RenderCopyEx(ekran, obraz_napis_os_y, NULL, &rect_napis_os_y, 270, NULL, SDL_FLIP_NONE);
+    }
+
+    void wyswietlanie_obramowanie()
+    {
+        SDL_Rect rect_obramowanie;
+        rect_obramowanie.x = rect_wykres.x - odleglosc_od_krawedzi_lewej;
+        rect_obramowanie.y = rect_wykres.y - odleglosc_od_krawedzi_gornej;
+        rect_obramowanie.w = rect_wykres.w + odleglosc_od_krawedzi_lewej + odleglosc_od_krawedzi_prawej;
+        rect_obramowanie.h = rect_wykres.h + odleglosc_od_krawedzi_gornej + odleglosc_od_krawedzi_dolnej;
+
+        SDL_RenderDrawRect(ekran, &rect_obramowanie);
+    }
+
+    void wyswietlanie_napisu()
+    {
+        SDL_RenderCopy(ekran, obraz_napis, NULL, &rect_napis);
+    }
+
+    void zmiana_polozenia_wykresu(int x, int y)
+    {
+        rect_wykres.x = x;
+        rect_wykres.y = y;
+    }
+
+    void wyswietlaj_wykres(bool wyswietlaj)
+    {
+        widoczny_wykres = wyswietlaj;
+    }
+
+    void wyswietlaj_tekst(bool wyswietlaj)
+    {
+        widoczny_tekst = wyswietlaj;
+    }
+
+    bool sprawdzanie_myszka_na_krawedzi_pionowej()
+    {
+        if(widoczny_wykres == 0)
+        {
+            return 0;
+        }
+        if(sprawdzanie_czy_najechala_myszka(rect_wykres.x+rect_wykres.w+odleglosc_od_krawedzi_prawej-5, rect_wykres.y-odleglosc_od_krawedzi_gornej, 10, odleglosc_od_krawedzi_gornej+rect_wykres.h+odleglosc_od_krawedzi_dolnej-15))
+        {
+            if(aktualny_wyglad_kursora != 4)
+            {
+                SDL_SetCursor(kursor_strzalka_poziom);
+                aktualny_wyglad_kursora = 4;
+            }
+            return 1;
+        }
+
+        return 0;
+    }
+
+    bool sprawdzanie_myszka_na_krawedzi_poziomej()
+    {
+        if(widoczny_wykres == 0)
+        {
+            return 0;
+        }
+        if(sprawdzanie_czy_najechala_myszka(rect_wykres.x-odleglosc_od_krawedzi_lewej, rect_wykres.y+rect_wykres.h+odleglosc_od_krawedzi_dolnej-5, odleglosc_od_krawedzi_lewej+rect_wykres.w+odleglosc_od_krawedzi_prawej-15, 10))
+        {
+            if(aktualny_wyglad_kursora != 5)
+            {
+                SDL_SetCursor(kursor_strzalka_pion);
+                aktualny_wyglad_kursora = 5;
+            }
+            return 1;
+        }
+
+        return 0;
+    }
+
+    bool sprawdzanie_myszka_na_rogu()
+    {
+        if(widoczny_wykres == 0)
+        {
+            return 0;
+        }
+        if(sprawdzanie_czy_najechala_myszka(rect_wykres.x+rect_wykres.w+odleglosc_od_krawedzi_prawej-5, rect_wykres.y+rect_wykres.h+odleglosc_od_krawedzi_dolnej-15, 10, 15)||
+                sprawdzanie_czy_najechala_myszka(rect_wykres.x+rect_wykres.w+odleglosc_od_krawedzi_prawej-15, rect_wykres.y+rect_wykres.h+odleglosc_od_krawedzi_dolnej-5, 15, 10))
+        {
+            if(aktualny_wyglad_kursora != 1)
+            {
+                SDL_SetCursor(kursor_strzalka_ukos_malejacy);
+                aktualny_wyglad_kursora = 1;
+            }
+            return 1;
+        }
+
+        return 0;
+    }
+
+    void zmiana_wielkosci_wykresu_wysokosc_kursor()
+    {
+        int nowa_wysokosc = rect_myszka.y - rect_wykres.y - odleglosc_od_krawedzi_dolnej;
+        if(nowa_wysokosc <= 100)
+        {
+            rect_wykres.h = 100;
+        }
+        else if(nowa_wysokosc >= 300)
+        {
+            rect_wykres.h = 300;
+        }
+        else
+        {
+            rect_wykres.h = nowa_wysokosc;
+        }
+    }
+
+    void zmiana_wielkosci_wykresu_szerokosc_kursor()
+    {
+        int nowa_szerokosc = rect_myszka.x - rect_wykres.x - odleglosc_od_krawedzi_prawej;
+        if(nowa_szerokosc <= 100)
+        {
+            rect_wykres.w = 100;
+            liczba_wyswietlanych_punktow = 100;
+        }
+        else if(nowa_szerokosc >= 600)
+        {
+            rect_wykres.w = 600;
+            liczba_wyswietlanych_punktow = 600;
+        }
+        else
+        {
+            rect_wykres.w = nowa_szerokosc;
+            liczba_wyswietlanych_punktow = nowa_szerokosc;
+        }
+    }
+
+    void zmiana_wielkosci_wykresu_wszystko_kursor()
+    {
+        zmiana_wielkosci_wykresu_szerokosc_kursor();
+        zmiana_wielkosci_wykresu_wysokosc_kursor();
+    }
+
+    bool sprawdzanie_myszka_na_wykresie()
+    {
+        if(widoczny_wykres == 0)
+        {
+            return 0;
+        }
+
+        if(sprawdzanie_czy_najechala_myszka(rect_wykres.x-odleglosc_od_krawedzi_lewej, rect_wykres.y-odleglosc_od_krawedzi_gornej, odleglosc_od_krawedzi_lewej+rect_wykres.w+odleglosc_od_krawedzi_prawej, odleglosc_od_krawedzi_gornej+rect_wykres.h+odleglosc_od_krawedzi_dolnej))
+        {
+            if(aktualny_wyglad_kursora != 7)
+            {
+                SDL_SetCursor(kursor_przesuwanie);
+                aktualny_wyglad_kursora = 7;
+            }
+            return 1;
+        }
+        return 0;
+    }
+
+    void przesuwanie_wykresu()
+    {
+        int nowe_x, nowe_y;
+        przesuwanie_obiektu(nowe_x, nowe_y, rect_wykres.x-odleglosc_od_krawedzi_lewej, rect_wykres.y-odleglosc_od_krawedzi_gornej, odleglosc_od_krawedzi_lewej+rect_wykres.w+odleglosc_od_krawedzi_prawej, odleglosc_od_krawedzi_gornej+rect_wykres.h+odleglosc_od_krawedzi_dolnej, rect_okno.w-5, 5, 5, rect_okno.h-5);
+
+        rect_wykres.x = nowe_x + odleglosc_od_krawedzi_lewej;
+        rect_wykres.y = nowe_y + odleglosc_od_krawedzi_gornej;
+    }
+
+    virtual void dopisz(int liczba) = 0;
+
+    virtual void dopisz(double liczba) = 0;
+
+    virtual void wyswietlanie_wykresu() = 0;
+};
+
+class klasa_wykres_int:public klasa_wykres
+{
+private:
+    int tablica_danych[600];
+    int min_y;
+    int max_y;
+
+public:
+    klasa_wykres_int():klasa_wykres()
+    {
+        for(int i=0; i<600; i++)
+        {
+            tablica_danych[i] = 999999;
+        }
+
+        min_y = 999999;
+        max_y = -999999;
+    }
+
+    ~klasa_wykres_int()
+    {
+        ;
+    }
+
+    void stworz_opis_osi_y()
+    {
+        int zakres_wartosci = max_y - min_y;
+        for(int i=0; i<5; i++)
+        {
+            stringstream tekst;
+            tekst<<double(zakres_wartosci*i)/4 + min_y;
+            tekst_to_texture(obraz_opis_osi_y[i], tekst.str(), 255, 255, 255, 12);
+        }
+    }
+
+    void aktualizacja_napisu()
+    {
+        stringstream tekst_odczytany;
+        tekst_odczytany<<tablica_danych[599];
+        tekst_to_texture(obraz_napis, napis+tekst_odczytany.str(), 255, 255, 255, wielkosc_czcionki_napisu);
+        SDL_QueryTexture(obraz_napis, NULL, NULL, &rect_napis.w, &rect_napis.h);
+    }
+
+    void dopisz(int liczba)
+    {
+        for(int i=0; i<599; i++)
+        {
+            tablica_danych[i] = tablica_danych[i+1];
+        }
+        tablica_danych[599] = liczba;
+
+        if(widoczny_tekst)
+        {
+            aktualizacja_napisu();
+        }
+    }
+
+    void dopisz(double liczba)
+    {
+        dopisz(int(liczba));
+    }
+
+    int najwieksza_wartosc()
+    {
+        int liczba = -999999;
+        for(int i=600-liczba_wyswietlanych_punktow; i<600; i++)
+        {
+            if(tablica_danych[i] > liczba && tablica_danych[i] != 999999)
+            {
+                liczba = tablica_danych[i];
+            }
+        }
+        return liczba;
+    }
+
+    int najmniejsza_wartosc()
+    {
+        int liczba = 999999;
+        for(int i=600-liczba_wyswietlanych_punktow; i<600; i++)
+        {
+            if(tablica_danych[i] < liczba)
+            {
+                liczba = tablica_danych[i];
+            }
+        }
+        return liczba;
+    }
+
+    void tworzenie_tablicy_wspolrzednych()
+    {
+        int nowe_min_y = najmniejsza_wartosc() - 1;
+        int nowe_max_y = najwieksza_wartosc() + 1;
+
+        int zakres_wartosci = nowe_max_y - nowe_min_y;
+
+        if(zakres_wartosci >= 2)
+        {
+            if(min_y != nowe_min_y || max_y != nowe_max_y)
+            {
+                min_y = nowe_min_y;
+                max_y = nowe_max_y;
+                stworz_opis_osi_y();
+            }
+
+            for(int i=0; i<600; i++)
+            {
+                if(tablica_danych[i] != 999999)
+                {
+                    tablica_wspolrzednych[i].x = i + rect_wykres.x - 600 + liczba_wyswietlanych_punktow;
+                    tablica_wspolrzednych[i].y = rect_wykres.y + rect_wykres.h - rect_wykres.h*(tablica_danych[i]-min_y)/zakres_wartosci;
+                }
+            }
+        }
+    }
+
+    void wyswietlanie_wykresu()
+    {
+        if(widoczny_wykres == 1)
+        {
+            klasa_wykres::wyswietlanie_linie_pomocnicze_poziome();
+            klasa_wykres::wyswietlanie_osie_wykresu();
+            klasa_wykres::wyswietlanie_opis_osi_x();
+            klasa_wykres::wyswietlanie_napisy_osie();
+            klasa_wykres::wyswietlanie_obramowanie();
+
+            tworzenie_tablicy_wspolrzednych();
+
+            if(min_y != 999999)
+            {
+                klasa_wykres::wyswietlanie_opis_osi_y();
+                klasa_wykres::wyswietlanie_linie_wykresu();
+            }
+        }
+    }
+};
+
+class klasa_wykres_double:public klasa_wykres
+{
+private:
+    double tablica_danych[600];
+    double min_y;
+    double max_y;
+
+public:
+    klasa_wykres_double():klasa_wykres()
+    {
+        for(int i=0; i<600; i++)
+        {
+            tablica_danych[i] = 999999;
+        }
+
+        min_y = 999999;
+        max_y = -999999;
+    }
+
+    ~klasa_wykres_double()
+    {
+        ;
+    }
+
+    void stworz_opis_osi_y()
+    {
+        double zakres_wartosci = max_y - min_y;
+        for(int i=0; i<5; i++)
+        {
+            stringstream tekst;
+            tekst<<zakres_wartosci*i/4 + min_y;
+            tekst_to_texture(obraz_opis_osi_y[i], tekst.str(), 255, 255, 255, 12);
+        }
+    }
+
+    void aktualizacja_napisu()
+    {
+        stringstream tekst_odczytany;
+        tekst_odczytany<<tablica_danych[599];
+        tekst_to_texture(obraz_napis, napis+tekst_odczytany.str(), 255, 255, 255, wielkosc_czcionki_napisu);
+        SDL_QueryTexture(obraz_napis, NULL, NULL, &rect_napis.w, &rect_napis.h);
+    }
+
+    void dopisz(double liczba)
+    {
+        for(int i=0; i<599; i++)
+        {
+            tablica_danych[i] = tablica_danych[i+1];
+        }
+        tablica_danych[599] = liczba;
+
+        if(widoczny_tekst)
+        {
+            aktualizacja_napisu();
+        }
+    }
+
+    void dopisz(int liczba)
+    {
+        dopisz(double(liczba));
+    }
+
+    double najwieksza_wartosc()
+    {
+        double liczba = -999999;
+        for(int i=600-liczba_wyswietlanych_punktow; i<600; i++)
+        {
+            if(tablica_danych[i] > liczba && tablica_danych[i] != 999999)
+            {
+                liczba = tablica_danych[i];
+            }
+        }
+        return liczba;
+    }
+
+    double najmniejsza_wartosc()
+    {
+        double liczba = 999999;
+        for(int i=600-liczba_wyswietlanych_punktow; i<600; i++)
+        {
+            if(tablica_danych[i] < liczba)
+            {
+                liczba = tablica_danych[i];
+            }
+        }
+        return liczba;
+    }
+
+    void tworzenie_tablicy_wspolrzednych()
+    {
+        double nowe_min_y = floor(najmniejsza_wartosc()) - 1;
+        double nowe_max_y = ceil(najwieksza_wartosc()) + 1;
+
+        double zakres_wartosci = nowe_max_y - nowe_min_y;
+
+        if(zakres_wartosci >= 2)
+        {
+            if(min_y != nowe_min_y || max_y != nowe_max_y)
+            {
+                min_y = nowe_min_y;
+                max_y = nowe_max_y;
+                stworz_opis_osi_y();
+            }
+
+            for(int i=0; i<600; i++)
+            {
+                if(tablica_danych[i] != 999999)
+                {
+                    tablica_wspolrzednych[i].x = i + rect_wykres.x - 600 + liczba_wyswietlanych_punktow;
+                    tablica_wspolrzednych[i].y = rect_wykres.y + rect_wykres.h - rect_wykres.h*(tablica_danych[i]-min_y)/zakres_wartosci;
+                }
+            }
+        }
+    }
+
+    void wyswietlanie_wykresu()
+    {
+        if(widoczny_wykres == 1)
+        {
+            klasa_wykres::wyswietlanie_linie_pomocnicze_poziome();
+            klasa_wykres::wyswietlanie_osie_wykresu();
+            klasa_wykres::wyswietlanie_opis_osi_x();
+            klasa_wykres::wyswietlanie_napisy_osie();
+            klasa_wykres::wyswietlanie_obramowanie();
+
+            tworzenie_tablicy_wspolrzednych();
+
+            if(min_y != 999999)
+            {
+                klasa_wykres::wyswietlanie_opis_osi_y();
+                klasa_wykres::wyswietlanie_linie_wykresu();
+            }
+        }
+    }
+};
+
+class klasa_lista_dzialajacych
+{
+private:
+    klasa_obraz obraz_correct;
+    klasa_obraz obraz_incorrect;
+    klasa_obraz obraz_SHT;
+    klasa_obraz obraz_altimu_akce_zyro;
+    klasa_obraz obraz_altimu_temp_cisn;
+    klasa_obraz obraz_altimu_mag;
+    klasa_obraz obraz_dallas;
+    klasa_obraz obraz_SD;
+    klasa_obraz obraz_GPS;
+    int znalezione_SHT;
+    int znalezione_altimu_akce_zyro;
+    int znalezione_altimu_temp_cisn;
+    int znalezione_altimu_mag;
+    int znalezione_dallas;
+    int znalezione_SD;
+    int znalezione_GPS;
+
+    SDL_Rect rect_lista_dzialajacych;
+
+    bool widoczne_lista_dzialajacych;
+
+public:
+    klasa_lista_dzialajacych() :obraz_correct("correct.bmp", 300, 300, 50, 50), obraz_incorrect("incorrect.bmp", 350, 300, 50, 50),
+                          obraz_SHT("SHT.bmp", 10, 10, 80, 80), obraz_altimu_akce_zyro("altimu_akce_zyro.bmp", 10, 90, 80, 80),
+                          obraz_altimu_temp_cisn("altimu_temp_cisn.bmp", 10, 170, 80, 80), obraz_altimu_mag("altimu_mag.bmp", 10, 250, 80, 80),
+                          obraz_dallas("dallas.bmp", 10, 330, 80, 80), obraz_SD("SD.bmp", 10, 410, 80, 80),
+                          obraz_GPS("gps.bmp", 10, 490, 80, 80)
+    {
+        znalezione_SHT = 0;
+        znalezione_altimu_akce_zyro = 0;
+        znalezione_altimu_temp_cisn = 0;
+        znalezione_altimu_mag = 0;
+        znalezione_dallas = 0;
+        znalezione_SD = 0;
+        znalezione_GPS = 0;
+
+        rect_lista_dzialajacych.x = 10;
+        rect_lista_dzialajacych.y = 10;
+        rect_lista_dzialajacych.w = 160;
+        rect_lista_dzialajacych.h = 560;
+
+        widoczne_lista_dzialajacych = 1;
+    }
+    ~klasa_lista_dzialajacych()
+    {
+        ;
+    }
+
+    void wyswietlanie_correct_incorrect(bool znalezione, int przesuniecie_y)
+    {
+        if(znalezione == 1)
+        {
+            obraz_correct.wyswietlanie_obrazu_inne_wspolrzedne(rect_lista_dzialajacych.x+95, rect_lista_dzialajacych.y+przesuniecie_y);
+        }
+        else
+        {
+            obraz_incorrect.wyswietlanie_obrazu_inne_wspolrzedne(rect_lista_dzialajacych.x+95, rect_lista_dzialajacych.y+przesuniecie_y);
+        }
+    }
+
+    void wyswietlanie_lista_dzialajacych()
+    {
+        SDL_SetRenderDrawColor(ekran, 255, 255, 255, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(ekran, &rect_lista_dzialajacych);
+
+        obraz_SHT.wyswietlanie_obrazu();
+        obraz_altimu_akce_zyro.wyswietlanie_obrazu();
+        obraz_altimu_temp_cisn.wyswietlanie_obrazu();
+        obraz_altimu_mag.wyswietlanie_obrazu();
+        obraz_dallas.wyswietlanie_obrazu();
+        obraz_SD.wyswietlanie_obrazu();
+        obraz_GPS.wyswietlanie_obrazu();
+
+        SDL_SetRenderDrawColor(ekran, 0, 0, 0, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+80, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+80);
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+160, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+160);
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+240, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+240);
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+320, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+320);
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+400, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+400);
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+480, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+480);
+
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x+80, rect_lista_dzialajacych.y, rect_lista_dzialajacych.x+80, rect_lista_dzialajacych.y+560);
+
+        wyswietlanie_correct_incorrect(znalezione_SHT, 15);
+        wyswietlanie_correct_incorrect(znalezione_altimu_akce_zyro, 95);
+        wyswietlanie_correct_incorrect(znalezione_altimu_temp_cisn, 175);
+        wyswietlanie_correct_incorrect(znalezione_altimu_mag, 255);
+        wyswietlanie_correct_incorrect(znalezione_dallas, 335);
+        wyswietlanie_correct_incorrect(znalezione_SD, 415);
+        wyswietlanie_correct_incorrect(znalezione_GPS, 495);
+    }
+
+    void aktualizacja_dzialajacych(int spis_dzialajacych)
+    {
+        if (spis_dzialajacych / 256 == 1)
+        {
+            znalezione_SD = 1;
+            spis_dzialajacych -= 256;
+        }
+        else
+        {
+            znalezione_SD = 0;
+        }
+
+        if (spis_dzialajacych / 128 == 1)
+        {
+            znalezione_SHT = 1;
+            spis_dzialajacych -= 128;
+        }
+        else
+        {
+            znalezione_SHT = 0;
+        }
+
+        if (spis_dzialajacych / 64 == 1)
+        {
+            znalezione_dallas = 1;
+            spis_dzialajacych -= 64;
+        }
+        else
+        {
+            znalezione_dallas = 0;
+        }
+
+        if (spis_dzialajacych / 32 == 1)
+        {
+            znalezione_GPS = 1;
+            spis_dzialajacych -= 32;
+        }
+        else
+        {
+            znalezione_GPS = 0;
+        }
+
+        if (spis_dzialajacych / 16 == 1)
+        {
+            znalezione_altimu_akce_zyro = 1;
+            spis_dzialajacych -= 16;
+        }
+        else
+        {
+            znalezione_altimu_akce_zyro = 0;
+        }
+
+        if (spis_dzialajacych / 8 == 1)
+        {
+            znalezione_altimu_mag = 1;
+            spis_dzialajacych -= 8;
+        }
+        else
+        {
+            znalezione_altimu_mag = 0;
+        }
+
+        if (spis_dzialajacych / 4 == 1)
+        {
+            znalezione_altimu_temp_cisn = 1;
+            spis_dzialajacych -= 4;
+        }
+        else
+        {
+            znalezione_altimu_temp_cisn = 0;
+        }
+    }
+
+    bool sprawdzanie_myszka_na_lista_dzialajacych()
+    {
+        if(widoczne_lista_dzialajacych == 0)
+        {
+            return 0;
+        }
+
+        if(sprawdzanie_czy_najechala_myszka(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y, rect_lista_dzialajacych.w, rect_lista_dzialajacych.h))
+        {
+            if(aktualny_wyglad_kursora != 7)
+            {
+                SDL_SetCursor(kursor_przesuwanie);
+                aktualny_wyglad_kursora = 7;
+            }
+            return 1;
+        }
+        return 0;
+    }
+
+    void przesuwanie_lista_dzialajacych()
+    {
+        przesuwanie_obiektu(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y, rect_lista_dzialajacych.w, rect_lista_dzialajacych.h, rect_okno.w-5, 5, 5, rect_okno.h-5);
+
+        obraz_SHT.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y);
+        obraz_altimu_akce_zyro.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+80);
+        obraz_altimu_temp_cisn.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+160);
+        obraz_altimu_mag.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+240);
+        obraz_dallas.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+320);
+        obraz_SD.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+400);
+        obraz_GPS.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+480);
+    }
+};
+
+class klasa_tabela_COM
+{
+private:
+    klasa_obraz obraz_correct;
+    klasa_obraz obraz_incorrect;
+    klasa_obraz obraz_USB;
+    klasa_przycisk przycisk_reset_COM;
+    SDL_Rect rect_tabela_COM;
+    int znalezione_COM;
+
+public:
+    klasa_tabela_COM() :obraz_correct("correct.bmp", 0, 0, 50, 50), obraz_incorrect("incorrect.bmp", 0, 0, 50, 50),
+                   obraz_USB("USB.bmp", 0, 0, 80, 80), przycisk_reset_COM(0, 0, 80, 30, "Reset COM")
+    {
+        rect_tabela_COM.x = 800;
+        rect_tabela_COM.y = 100;
+        rect_tabela_COM.w = 160;
+        rect_tabela_COM.h = 140;
+        znalezione_COM = 0;
+
+        obraz_USB.zmiana_wspolrzednych(rect_tabela_COM.x, rect_tabela_COM.y);
+        obraz_correct.zmiana_wspolrzednych(rect_tabela_COM.x+95, rect_tabela_COM.y+15);
+        obraz_incorrect.zmiana_wspolrzednych(rect_tabela_COM.x+95, rect_tabela_COM.y+15);
+
+        przycisk_reset_COM.zmiana_polozenia_przycisku(rect_tabela_COM.x+40, rect_tabela_COM.y+95);
+    }
+
+    ~klasa_tabela_COM()
+    {
+        ;
+    }
+
+    void wyswietlanie_tabela_COM()
+    {
+        SDL_SetRenderDrawColor(ekran, 255, 255, 255, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(ekran, &rect_tabela_COM);
+        obraz_USB.wyswietlanie_obrazu();
+
+        if(znalezione_COM == 1)
+        {
+            obraz_correct.wyswietlanie_obrazu();
+        }
+        else
+        {
+            obraz_incorrect.wyswietlanie_obrazu();
+        }
+
+        SDL_SetRenderDrawColor(ekran, 0, 0, 0, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawLine(ekran, rect_tabela_COM.x, rect_tabela_COM.y+80, rect_tabela_COM.x+160, rect_tabela_COM.y+80);
+        SDL_RenderDrawLine(ekran, rect_tabela_COM.x+80, rect_tabela_COM.y, rect_tabela_COM.x+80, rect_tabela_COM.y+80);
+
+        przycisk_reset_COM.wyswietlanie_przycisku();
+    }
+
+    bool sprawdzanie_myszka_na_tabela_COM()
+    {
+        if(sprawdzanie_czy_najechala_myszka(rect_tabela_COM.x, rect_tabela_COM.y, rect_tabela_COM.w, rect_tabela_COM.h))
+        {
+            if(aktualny_wyglad_kursora != 7)
+            {
+                SDL_SetCursor(kursor_przesuwanie);
+                aktualny_wyglad_kursora = 7;
+            }
+            return 1;
+        }
+        return 0;
+    }
+
+    void przesuwanie_tabela_COM()
+    {
+        przesuwanie_obiektu(rect_tabela_COM.x, rect_tabela_COM.y, rect_tabela_COM.x, rect_tabela_COM.y, rect_tabela_COM.w, rect_tabela_COM.h, rect_okno.w-5, 5, 5, rect_okno.h-5);
+
+        obraz_USB.zmiana_wspolrzednych(rect_tabela_COM.x, rect_tabela_COM.y);
+        obraz_correct.zmiana_wspolrzednych(rect_tabela_COM.x+95, rect_tabela_COM.y+15);
+        obraz_incorrect.zmiana_wspolrzednych(rect_tabela_COM.x+95, rect_tabela_COM.y+15);
+
+        przycisk_reset_COM.zmiana_polozenia_przycisku(rect_tabela_COM.x+40, rect_tabela_COM.y+95);
+    }
+};
+
+class klasa_co_robi_cansat
+{
+private:
+    SDL_Rect rect_co_robi_cansat;
+    SDL_Rect rect_kolo_1;
+    SDL_Rect rect_kolo_2;
+    SDL_Rect rect_kolo_3;
+    SDL_Rect rect_kolo_4;
+    SDL_Rect rect_puszka;
+    klasa_obraz obraz_kolo_od_boku1;
+    klasa_obraz obraz_kolo_od_boku2;
+    klasa_obraz obraz_puszka_od_boku;
+    klasa_tekst tekst1;
+    klasa_tekst tekst2;
+    klasa_tekst tekst3;
+    klasa_tekst tekst4;
+    klasa_tekst tekst5;
+    klasa_tekst tekst6;
+    klasa_tekst tekst7;
+
+public:
+    klasa_co_robi_cansat() :obraz_kolo_od_boku1("kolo_od_boku.bmp", 0, 0, 50, 50), obraz_kolo_od_boku2("kolo_od_boku.bmp", 0, 0, 50, 50), obraz_puszka_od_boku("puszka_od_boku.bmp", 0, 0, 70, 70),
+                            tekst1("Wysokosc: 0.23m", 0, 0, 255, 255, 255, 12), tekst2("Szerekosc geo.: 51.2675", 0, 0, 255, 255, 255, 12), tekst3("Dlugosc geo.: 75.7490", 0, 0, 255, 255, 255, 12),
+                            tekst4("Odleglosc prosta: 10.14m", 0, 0, 255, 255, 255, 12), tekst5("Odleglosc calkowita: 10.34m", 0, 0, 255, 255, 255, 12), tekst6("Szybkosc opadania: 0m/s", 0, 0, 255, 255, 255, 12),
+                            tekst7("Tryb: 2", 0, 0, 255, 255, 255, 12)
+    {
+        rect_co_robi_cansat.x = 700;
+        rect_co_robi_cansat.y = 20;
+        rect_co_robi_cansat.w = 200;
+        rect_co_robi_cansat.h = 420;
+
+        rect_kolo_1.x = rect_co_robi_cansat.x + 10;
+        rect_kolo_1.y = rect_co_robi_cansat.y + 55;
+        rect_kolo_1.w = 10;
+        rect_kolo_1.h = 45;
+
+        rect_kolo_2.x = rect_co_robi_cansat.x + 25;
+        rect_kolo_2.y = rect_co_robi_cansat.y + 55;
+        rect_kolo_2.w = 10;
+        rect_kolo_2.h = 45;
+
+        rect_kolo_3.x = rect_co_robi_cansat.x + 165;
+        rect_kolo_3.y = rect_co_robi_cansat.y + 55;
+        rect_kolo_3.w = 10;
+        rect_kolo_3.h = 45;
+
+        rect_kolo_4.x = rect_co_robi_cansat.x + 180;
+        rect_kolo_4.y = rect_co_robi_cansat.y + 55;
+        rect_kolo_4.w = 10;
+        rect_kolo_4.h = 45;
+
+        rect_puszka.x = rect_co_robi_cansat.x + 40;
+        rect_puszka.y = rect_co_robi_cansat.y + 20;
+        rect_puszka.w = 120;
+        rect_puszka.h = 60;
+
+        obraz_puszka_od_boku.zmiana_wspolrzednych(rect_co_robi_cansat.x+65, rect_co_robi_cansat.y+110);
+        obraz_kolo_od_boku1.zmiana_wspolrzednych(rect_co_robi_cansat.x+50, rect_co_robi_cansat.y+145);
+        obraz_kolo_od_boku2.zmiana_wspolrzednych(rect_co_robi_cansat.x+100, rect_co_robi_cansat.y+145);
+
+        tekst1.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+230);
+        tekst2.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+255);
+        tekst3.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+280);
+        tekst4.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+305);
+        tekst5.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+330);
+        tekst6.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+355);
+        tekst7.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+380);
+    }
+
+    ~klasa_co_robi_cansat()
+    {
+        ;
+    }
+
+    bool sprawdzanie_myszka_na_co_robi_cansat()
+    {
+        if(sprawdzanie_czy_najechala_myszka(rect_co_robi_cansat.x, rect_co_robi_cansat.y, rect_co_robi_cansat.w, rect_co_robi_cansat.h))
+        {
+            if(aktualny_wyglad_kursora != 7)
+            {
+                SDL_SetCursor(kursor_przesuwanie);
+                aktualny_wyglad_kursora = 7;
+            }
+            return 1;
+        }
+        return 0;
+    }
+
+    void wyswietlanie_co_robi_cansat()
+    {
+        SDL_SetRenderDrawColor(ekran, 255, 255, 255, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawRect(ekran, &rect_co_robi_cansat);
+
+        SDL_SetRenderDrawColor(ekran, 178, 34, 34, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(ekran, &rect_kolo_1);
+        SDL_RenderFillRect(ekran, &rect_kolo_2);
+        SDL_RenderFillRect(ekran, &rect_kolo_3);
+        SDL_RenderFillRect(ekran, &rect_kolo_4);
+
+        SDL_SetRenderDrawColor(ekran, 255, 0, 0, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(ekran, &rect_puszka);
+
+        obraz_puszka_od_boku.wyswietlanie_obrazu();
+        obraz_kolo_od_boku1.wyswietlanie_obrazu_z_obrotem(10);
+        obraz_kolo_od_boku2.wyswietlanie_obrazu_z_obrotem(10);
+
+        tekst1.wyswietlanie_tekstu();
+        tekst2.wyswietlanie_tekstu();
+        tekst3.wyswietlanie_tekstu();
+        tekst4.wyswietlanie_tekstu();
+        tekst5.wyswietlanie_tekstu();
+        tekst6.wyswietlanie_tekstu();
+        tekst7.wyswietlanie_tekstu();
+    }
+
+    void przesuwanie_co_robi_CanSat()
+    {
+        przesuwanie_obiektu(rect_co_robi_cansat.x, rect_co_robi_cansat.y, rect_co_robi_cansat.x, rect_co_robi_cansat.y, rect_co_robi_cansat.w, rect_co_robi_cansat.h, rect_okno.w-5, 5, 5, rect_okno.h-5);
+
+        rect_kolo_1.x = rect_co_robi_cansat.x + 10;
+        rect_kolo_1.y = rect_co_robi_cansat.y + 55;
+
+        rect_kolo_2.x = rect_co_robi_cansat.x + 25;
+        rect_kolo_2.y = rect_co_robi_cansat.y + 55;
+
+        rect_kolo_3.x = rect_co_robi_cansat.x + 165;
+        rect_kolo_3.y = rect_co_robi_cansat.y + 55;
+
+        rect_kolo_4.x = rect_co_robi_cansat.x + 180;
+        rect_kolo_4.y = rect_co_robi_cansat.y + 55;
+
+        rect_puszka.x = rect_co_robi_cansat.x + 40;
+        rect_puszka.y = rect_co_robi_cansat.y + 20;
+
+        obraz_puszka_od_boku.zmiana_wspolrzednych(rect_co_robi_cansat.x+65, rect_co_robi_cansat.y+110);
+        obraz_kolo_od_boku1.zmiana_wspolrzednych(rect_co_robi_cansat.x+50, rect_co_robi_cansat.y+145);
+        obraz_kolo_od_boku2.zmiana_wspolrzednych(rect_co_robi_cansat.x+100, rect_co_robi_cansat.y+145);
+
+        tekst1.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+230);
+        tekst2.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+255);
+        tekst3.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+280);
+        tekst4.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+305);
+        tekst5.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+330);
+        tekst6.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+355);
+        tekst7.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+380);
+    }
+};
+
+//ZMIENNE GLOBALNE (WYKRESY)
+klasa_wykres_int tablica_wykresow_int[8];
+klasa_wykres_double tablica_wykresow_double[28];
+
+const int liczba_wykresow = 36;
+
+/*
+TABLICA_WYKRESOW_INT:
+0 - wykres_godzina
+1 - wykres_minuta
+2 - wykres_sekunda
+3 - wykres_spis_dzialajacych
+4 - wykres_opis_dzialania
+5 - wykres_RSSI_cansat
+6 - wykres_spis_dzialajacych_stacja
+7 - wykres_RSSI_stacja
+
+TABLICA_WYKRESOW_DOUBLE:
+8 - wykres_lokalizacja0
+9 - wykres_lokalizacja1
+10 - wykres_wysokosc
+11 - wykres_temperatura_DS18B20
+12 - wykres_temperatura_SHT
+13 - wykres_wilgotnosc
+14 - wykres_akcelerometr0
+15 - wykres_akcelerometr1
+16 - wykres_akcelerometr2
+17 - wykres_zyroskop0
+18 - wykres_zyroskop1
+19 - wykres_zyroskop2
+20 - wykres_magnetometr0
+21 - wykres_magnetometr1
+22 - wykres_magnetometr2
+23 - wykres_temperatura_altimu
+24 - wykres_cisnienie_altimu
+25 - wykres_wilgotnosc_ziemi
+26 - wykres_napiecie_baterii
+27 - wykres_lokalizacja_stacja0
+28 - wykres_lokalizacja_stacja1
+29 - wykres_temperatura_altimu_stacja
+30 - wykres_cisnienie_altimu_stacja
+31 - wykres_roznica_wysokosci
+32 - wykres_odleglosc_prosta
+33 - wykres_odleglosc_calkowita
+34 - wykres_kat_wysokosc
+35 - wykres_kat_obrot*/
+//ZMIENNE GLOBALNE (WYKRESY) - KONIEC
+
+int potega(int liczba, int potega)
+{
+    if (potega == 0)
+    {
+        return 1;
+    }
+    int liczba_poczatkowa = liczba;
+    for (int i = 1; i < potega; i++)
+    {
+        liczba_poczatkowa *= liczba;
+    }
+    return liczba_poczatkowa;
+}
+
+int char_100_to_cyfra(char znak)
+{
+    if (znak == 18)
+    {
+        return -1;
+    }
+    if (znak == 19)
+    {
+        return -1;
+    }
+    for (int i = 20; i < 120; i++)
+    {
+        if (znak == i)
+        {
+            return i - 20;
+        }
+    }
+    return -1;
+}
+
+void char_100_to_int(char tekst[], int &liczba, int liczba_cyfr_100)
+{
+    liczba = 0;
+    int licznik = 0;
+    for (int i = potega(100, liczba_cyfr_100 - 1); i >= 1; i /= 100)
+    {
+        liczba += char_100_to_cyfra(tekst[licznik]) * i;
+        licznik++;
+    }
+}
+
+void rozszyfrowywanie_int(string gotowy_tekst, int &nr_znaku, int &liczba)
+{
+    bool ujemna = 0;
+    if (gotowy_tekst[nr_znaku - 1] == 19)
+    {
+        ujemna = 0;
+    }
+    else
+    {
+        ujemna = 1;
+    }
+
+    int liczba_cyfr_100 = 0;
+    while (gotowy_tekst[nr_znaku] != 16 && gotowy_tekst[nr_znaku] != 17 && gotowy_tekst[nr_znaku] != 18 && gotowy_tekst[nr_znaku] != 19 && gotowy_tekst[nr_znaku] != '\0')
+    {
+        liczba_cyfr_100++;
+        nr_znaku++;
+    }
+
+    char liczba_100[liczba_cyfr_100];
+    for (int i = 0 ; i < liczba_cyfr_100; i++)
+    {
+        liczba_100[i] = gotowy_tekst[nr_znaku - liczba_cyfr_100 + i];
+    }
+    char_100_to_int(liczba_100, liczba, liczba_cyfr_100);
+
+    if (ujemna == 1)
+    {
+        liczba *= -1;
+    }
+
+    nr_znaku++;
+}
+
+void rozszyfrowywanie_double(string gotowy_tekst, int &nr_znaku, double &liczba, int liczba_miejsc_po_przecinku)
+{
+    int liczba_int = 0;
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, liczba_int);
+    liczba = liczba_int / double(potega(10, liczba_miejsc_po_przecinku));
+}
+
+void rozszyfrowywanie(string gotowy_tekst)
+{
+    int nr_znaku = 1;
+
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, godzina);
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, minuta);
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, sekunda);
+    if (gotowy_tekst[nr_znaku - 1] == 16)
+    {
+        lokalizacja_znak[0] = 'N';
+    }
+    else
+    {
+        lokalizacja_znak[0] = 'S';
+    }
+    gotowy_tekst[nr_znaku - 1] = 19;
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[0], 4);
+    if (gotowy_tekst[nr_znaku - 1] == 16)
+    {
+        lokalizacja_znak[1] = 'W';
+    }
+    else
+    {
+        lokalizacja_znak[1] = 'E';
+    }
+    gotowy_tekst[nr_znaku - 1] = 19;
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[1], 4);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wysokosc, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_DS18B20, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_SHT, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wilgotnosc, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[0], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[1], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[2], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[0], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[1], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[2], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[0], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[1], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[2], 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_altimu, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, cisnienie_altimu, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wilgotnosc_ziemi, 2);
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, napiecie_baterii, 2);
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, opis_dzialania);
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, RSSI_cansat);
+    if (gotowy_tekst[nr_znaku - 1] == 16)
+    {
+        lokalizacja_znak_stacja[0] = 'N';
+    }
+    else
+    {
+        lokalizacja_znak_stacja[0] = 'S';
+    }
+    gotowy_tekst[nr_znaku - 1] = 19;
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja_stacja[0], 4);
+    if (gotowy_tekst[nr_znaku - 1] == 16)
+    {
+        lokalizacja_znak_stacja[1] = 'W';
+    }
+    else
+    {
+        lokalizacja_znak_stacja[1] = 'E';
+    }
+    gotowy_tekst[nr_znaku - 1] = 19;
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja_stacja[1], 4);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_altimu_stacja, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, cisnienie_altimu_stacja, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, roznica_wysokosci, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, odleglosc_prosta, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, odleglosc_calkowita, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, kat_wysokosc, 2);
+    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, kat_obrot, 2);
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych_stacja);
+    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, RSSI_stacja);
+}
+
+void wyswietlanie_odebranych()
+{
+    cout<<"Godzina: "<<godzina;
+    cout<<" Minuta: "<<minuta;
+    cout<<" Sekunda: "<<sekunda;
+    cout<<" spis_dzialajacych: "<<spis_dzialajacych;
+    cout<<" opis_dzialania: "<<opis_dzialania;
+    cout<<" RSSI_cansat: "<<RSSI_cansat<<endl;
+    cout<<"spis_dzialajacych_stacja: "<<spis_dzialajacych_stacja;
+    cout<<" RSSI_stacja: "<<RSSI_stacja;
+    cout<<" Lokalizacja0: "<<lokalizacja[0];
+    cout<<" Lokalizacja1: "<<lokalizacja[1];
+    cout<<" Wysokosc: "<<wysokosc;
+    cout<<" Temeratura_DS18B20: "<<temperatura_DS18B20<<endl;
+    cout<<"Temeratura_SHT: "<<temperatura_SHT;
+    cout<<" Wilgotnosc: "<<wilgotnosc;
+    cout<<" Akcelerometr0: "<<akcelerometr[0];
+    cout<<" Akcelerometr1: "<<akcelerometr[1];
+    cout<<" Akcelerometr2: "<<akcelerometr[2];
+    cout<<" Zyroskop0: "<<zyroskop[0];
+    cout<<" Zyroskop1: "<<zyroskop[1];
+    cout<<" Zyroskop2: "<<zyroskop[2]<<endl;
+    cout<<"Magnetometr0: "<<magnetometr[0];
+    cout<<" Magnetometr1: "<<magnetometr[1];
+    cout<<" Magnetometr2: "<<magnetometr[2];
+    cout<<" Temp_alti: "<<temperatura_altimu;
+    cout<<" Cisn_alti: "<<cisnienie_altimu;
+    cout<<" Napiecie_bat: "<<napiecie_baterii;
+}
+
+string odczytywanie_portu_szeregowego(int liczba_odbieranych_znakow)
+{
+    char input[liczba_odbieranych_znakow];
+    DCB dcBus;
+    DWORD  bytesRead, eventMask;
+    COMMTIMEOUTS timeouts;
+
+
+    bool error = 0;
+
+    if (hSerial == INVALID_HANDLE_VALUE)
+    {
+        error = 1;
+        SDL_Delay(300);
+    }
+    dcBus.DCBlength = sizeof(dcBus);
+    if ((GetCommState(hSerial, &dcBus) == 0))
+    {
+        error = 1;
+    }
+    dcBus.BaudRate = CBR_115200;
+    dcBus.ByteSize = DATABITS_8;
+    dcBus.Parity = NOPARITY;
+    dcBus.StopBits = ONESTOPBIT;
+    if ((GetCommState(hSerial, &dcBus) == 0))
+    {
+        error = 1;
+    }
+    if ((GetCommTimeouts(hSerial, &timeouts) == 0))
+    {
+        error = 1;
+    }
+    timeouts.ReadIntervalTimeout = 10;
+    timeouts.ReadTotalTimeoutMultiplier = 1;
+    timeouts.ReadTotalTimeoutConstant = 500;
+    timeouts.WriteTotalTimeoutMultiplier = 1;
+    timeouts.WriteTotalTimeoutConstant = 500;
+    if (SetCommTimeouts(hSerial, &timeouts) == 0)
+    {
+        error = 1;
+    }
+    if (SetCommMask(hSerial, EV_RXCHAR) == 0)
+    {
+        error = 1;
+    }
+    if (WaitCommEvent(hSerial, &eventMask, NULL))
+    {
+        if (!ReadFile(hSerial, &input, liczba_odbieranych_znakow, &bytesRead, NULL) !=0)
+        {
+            error = 1;
+        }
+    }
+    else
+    {
+        error = 1;
+    }
+
+    if(error == 1)
+    {
+        cout<<"ERROR Port szeregowy - odczytywanie"<<endl;
+        return "error";
+    }
+
+    string tekst = "";
+    for(int i=0; i<liczba_odbieranych_znakow; i++)
+    {
+        tekst += input[i];
+    }
+    return tekst;
+}
+
+bool odbieranie_danych(bool *odebrano)
+{
+    string liczba_znakow_string = odczytywanie_portu_szeregowego(16);
+    if(liczba_znakow_string == "error")
+    {
+        *odebrano = 1;
+        return 0;
+    }
+    int liczba_znakow = 0;
+    int znaki[14] = {-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2};
+    char tablica_cyfr[11] = {'x','0','1','2','3','4','5','6','7','8','9'};
+
+    string tekst ="error";
+
+    for(int i=0; i<14; i++)
+    {
+        for(int t=-1; t<10; t++)
+        {
+            if(liczba_znakow_string[i] == tablica_cyfr[t+1])
+            {
+                znaki[i] = t;
+            }
+        }
+    }
+
+    int licznik_znaku = -1;//szuka pierwszego 'x' z zapisu ile znakow jest do wyslania "____x1111x____"
+
+    do
+    {
+        licznik_znaku++;
+    }
+    while(znaki[licznik_znaku] != -1 && licznik_znaku < 13);
+
+    if(licznik_znaku < 9)
+    {
+        if(znaki[licznik_znaku+1] > -1 && znaki[licznik_znaku+2] > -1 && znaki[licznik_znaku+3] > -1 && znaki[licznik_znaku+4] > -1 && znaki[licznik_znaku+5] == -1)
+        {
+            liczba_znakow = znaki[licznik_znaku+1]*1000 + znaki[licznik_znaku+2]*100 + znaki[licznik_znaku+3]*10 + znaki[licznik_znaku+4];
+        }
+    }
+
+    if(liczba_znakow != 0)
+    {
+        tekst = odczytywanie_portu_szeregowego(liczba_znakow);
+        tekst += 18;
+    }
+
+    if(tekst == "error")
+    {
+        *odebrano = 1;
+        return 0;
+    }
+
+    if(liczba_znakow != 0)
+    {
+        rozszyfrowywanie(tekst);
+    }
+
+    //wyswietlanie_odebranych();
+
+    *odebrano = 1;
+    return 1;
+}
+
+void wysylanie_danych(char DataBuffer[])
+{
+    DWORD dwBytesToWrite = (DWORD)strlen(DataBuffer);
+    DWORD dwBytesWritten = 0;
+    BOOL bErrorFlag = FALSE;
+
+    bool error = 0;
+
+
+    if (hSerial == INVALID_HANDLE_VALUE)
+    {
+        error = 1;
+    }
+
+    bErrorFlag = WriteFile(hSerial, DataBuffer, dwBytesToWrite, &dwBytesWritten, NULL);
+
+    if (FALSE == bErrorFlag)
+    {
+        error = 1;
+    }
+    else if(dwBytesWritten != dwBytesToWrite)
+    {
+        error = 1;
+    }
+
+    if(error == 1)
+    {
+        cout<<"ERROR Port szeregowy"<<endl;
+    }
+}
+
+void dopisywanie_do_wykresow(klasa_wykres *wskaznik_wykres[])
+{
+    wskaznik_wykres[0]->dopisz(godzina);
+    wskaznik_wykres[1]->dopisz(minuta);
+    wskaznik_wykres[2]->dopisz(sekunda);
+    wskaznik_wykres[3]->dopisz(spis_dzialajacych);
+    wskaznik_wykres[4]->dopisz(opis_dzialania);
+    wskaznik_wykres[5]->dopisz(RSSI_cansat);
+    wskaznik_wykres[6]->dopisz(spis_dzialajacych_stacja);
+    wskaznik_wykres[7]->dopisz(RSSI_stacja);
+    wskaznik_wykres[8]->dopisz(lokalizacja[0]);
+    wskaznik_wykres[9]->dopisz(lokalizacja[1]);
+    wskaznik_wykres[10]->dopisz(wysokosc);
+    wskaznik_wykres[11]->dopisz(temperatura_DS18B20);
+    wskaznik_wykres[12]->dopisz(temperatura_SHT);
+    wskaznik_wykres[13]->dopisz(wilgotnosc);
+    wskaznik_wykres[14]->dopisz(akcelerometr[0]);
+    wskaznik_wykres[15]->dopisz(akcelerometr[1]);
+    wskaznik_wykres[16]->dopisz(akcelerometr[2]);
+    wskaznik_wykres[17]->dopisz(zyroskop[0]);
+    wskaznik_wykres[18]->dopisz(zyroskop[1]);
+    wskaznik_wykres[19]->dopisz(zyroskop[2]);
+    wskaznik_wykres[20]->dopisz(magnetometr[0]);
+    wskaznik_wykres[21]->dopisz(magnetometr[1]);
+    wskaznik_wykres[22]->dopisz(magnetometr[2]);
+    wskaznik_wykres[23]->dopisz(temperatura_altimu);
+    wskaznik_wykres[24]->dopisz(cisnienie_altimu);
+    wskaznik_wykres[25]->dopisz(wilgotnosc_ziemi);
+    wskaznik_wykres[26]->dopisz(napiecie_baterii);
+    wskaznik_wykres[27]->dopisz(lokalizacja_stacja[0]);
+    wskaznik_wykres[28]->dopisz(lokalizacja_stacja[1]);
+    wskaznik_wykres[29]->dopisz(temperatura_altimu_stacja);
+    wskaznik_wykres[30]->dopisz(cisnienie_altimu_stacja);
+    wskaznik_wykres[31]->dopisz(roznica_wysokosci);
+    wskaznik_wykres[32]->dopisz(odleglosc_prosta);
+    wskaznik_wykres[33]->dopisz(odleglosc_calkowita);
+    wskaznik_wykres[34]->dopisz(kat_wysokosc);
+    wskaznik_wykres[35]->dopisz(kat_obrot);
+}
+
+int main(int argc, char *args[])
+{
+    SDL_Init(SDL_INIT_EVERYTHING);
+    TTF_Init();
+
+    okno = SDL_CreateWindow("Rysowanie wykresow", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1100, 800, SDL_WINDOW_RESIZABLE);
+    ekran = SDL_CreateRenderer(okno, -1, SDL_RENDERER_ACCELERATED);
+    SDL_SetWindowMinimumSize(okno, 550, 300);
+
+    rect_okno.x = 0;
+    rect_okno.y = 0;
+    rect_okno.w = 1200;
+    rect_okno.h = 600;
+
+    {//PRZYGOTOWYWANIE CZCIONEK I KURSOROW
+        czcionka_12 = TTF_OpenFont("arial.ttf", 12);
+        czcionka_16 = TTF_OpenFont("arial.ttf", 16);
+
+        kursor_tradycyjny = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+        kursor_reka_klik = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+        kursor_strzalka_ukos_malejacy = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
+        kursor_strzalka_ukos_rosnacy = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
+        kursor_strzalka_poziom = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEWE);
+        kursor_strzalka_pion = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENS);
+        kursor_wpisywanie_tekstu = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_IBEAM);
+        kursor_przesuwanie = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEALL);
+    }
+
+    SDL_Event wydarzenie;
+
+    srand(time(NULL));
+
+    int czas_start = 0;//do obliczania czasu kazdej klatki - fps
+    int czas_stop = 0;//do obliczania czasu kazdej klatki - fps
+
+    bool odebrano = 0;//sprawdza czy odebrano sygnal z cansata
+
+    klasa_lista_dzialajacych lista_dzialajacych;
+    klasa_tabela_COM tabela_COM;
+    klasa_co_robi_cansat co_robi_cansat;
+
+    klasa_wykres *wskaznik_wykres[liczba_wykresow];
+
+    klasa_wykres *wskaznik_wykres_dostosowywanie = NULL;
+    void (klasa_wykres::*wskaznik_funkcji_wykres)();
+
+    {//PRZYPISANIE WYKRESOW DO WSKAZNIKOW
+        for(int i=0; i<8; i++)
+        {
+            wskaznik_wykres[i] = &tablica_wykresow_int[i];
+        }
+        for(int i=0; i<28; i++)
+        {
+            wskaznik_wykres[i+8] = &tablica_wykresow_double[i];
+        }
+    }
+
+    {//USTAWIANIA WIDOCZNYCH I NIEWIDOCZNYCH WYKRESOW
+        wskaznik_wykres[5]->wyswietlaj_wykres(true);
+        wskaznik_wykres[7]->wyswietlaj_wykres(true);
+        wskaznik_wykres[23]->wyswietlaj_wykres(true);
+        wskaznik_wykres[24]->wyswietlaj_wykres(true);
+        wskaznik_wykres[25]->wyswietlaj_wykres(true);
+        wskaznik_wykres[26]->wyswietlaj_wykres(true);
+        wskaznik_wykres[31]->wyswietlaj_wykres(true);
+    }
+
+    {//USTAWIENIE POLOZENIA WYKRESOW
+        wskaznik_wykres[5]->zmiana_polozenia_wykresu(300, 40);
+        wskaznik_wykres[7]->zmiana_polozenia_wykresu(300, 220);
+        wskaznik_wykres[23]->zmiana_polozenia_wykresu(300, 400);
+        wskaznik_wykres[24]->zmiana_polozenia_wykresu(300, 580);
+        wskaznik_wykres[25]->zmiana_polozenia_wykresu(650, 40);
+        wskaznik_wykres[26]->zmiana_polozenia_wykresu(650, 220);
+        wskaznik_wykres[31]->zmiana_polozenia_wykresu(650, 400);
+    }
+
+    bool myszka_najechala_na_wykres = 0;
+    bool myszka_najechala_na_lista_dzialajacych = 0;
+    bool myszka_najechala_na_tabela_COM = 0;
+    bool myszka_najechala_na_co_robi_cansat = 0;
+
+    bool wcisniety_lewy_przycisk_myszy = 0;
+    bool wcisniety_shift = 0;
+    bool ruch_myszki = 0;
+
+    {//PRZYGOTOWANIE OBIEKTOW - WYKRESY
+        wskaznik_wykres[0]->przygotowywanie_obiektu("Godzina[h]", "czas[s]");
+        wskaznik_wykres[1]->przygotowywanie_obiektu("Minuta[min]", "czas[s]");
+        wskaznik_wykres[2]->przygotowywanie_obiektu("Sekunda[s]", "czas[s]");
+        wskaznik_wykres[3]->przygotowywanie_obiektu("Spis dzialajacych", "czas[s]");
+        wskaznik_wykres[4]->przygotowywanie_obiektu("Opis dzialania", "czas[s]");
+        wskaznik_wykres[5]->przygotowywanie_obiektu("RSSI Cansat", "czas[s]");
+        wskaznik_wykres[6]->przygotowywanie_obiektu("Spis dzialajacych stacja", "czas[s]");
+        wskaznik_wykres[7]->przygotowywanie_obiektu("RSSI stacja", "czas[s]");
+        wskaznik_wykres[8]->przygotowywanie_obiektu("Szerokosc geo", "czas[s]");
+        wskaznik_wykres[9]->przygotowywanie_obiektu("Wysokosc geo", "czas[s]");
+        wskaznik_wykres[10]->przygotowywanie_obiektu("Wysokosc gps", "czas[s]");
+        wskaznik_wykres[11]->przygotowywanie_obiektu("Temperatura DS18B20[*C]", "czas[s]");
+        wskaznik_wykres[12]->przygotowywanie_obiektu("Temperatura SHT[*C]", "czas[s]");
+        wskaznik_wykres[13]->przygotowywanie_obiektu("Wilgotnosc[%]", "czas[s]");
+        wskaznik_wykres[14]->przygotowywanie_obiektu("Akceleromatr x", "czas[s]");
+        wskaznik_wykres[15]->przygotowywanie_obiektu("Akceleromatr y", "czas[s]");
+        wskaznik_wykres[16]->przygotowywanie_obiektu("Akceleromatr z", "czas[s]");
+        wskaznik_wykres[17]->przygotowywanie_obiektu("Zyroskop x", "czas[s]");
+        wskaznik_wykres[18]->przygotowywanie_obiektu("Zyroskop y", "czas[s]");
+        wskaznik_wykres[19]->przygotowywanie_obiektu("Zyroskop z", "czas[s]");
+        wskaznik_wykres[20]->przygotowywanie_obiektu("Magnetometr x", "czas[s]");
+        wskaznik_wykres[21]->przygotowywanie_obiektu("Magnetometr y", "czas[s]");
+        wskaznik_wykres[22]->przygotowywanie_obiektu("Magnetometr z", "czas[s]");
+        wskaznik_wykres[23]->przygotowywanie_obiektu("Temperatura altimu[*C]", "czas[s]");
+        wskaznik_wykres[24]->przygotowywanie_obiektu("Cisnienie altimu[hPa]", "czas[s]");
+        wskaznik_wykres[25]->przygotowywanie_obiektu("Wilgotnosc ziemi[%]", "czas[s]");
+        wskaznik_wykres[26]->przygotowywanie_obiektu("Napiecie baterii", "czas[s]");
+        wskaznik_wykres[27]->przygotowywanie_obiektu("Wys geo stacja", "czas[s]");
+        wskaznik_wykres[28]->przygotowywanie_obiektu("Szer geo stacja", "czas[s]");
+        wskaznik_wykres[29]->przygotowywanie_obiektu("Temp altimu stacja[*C]", "czas[s]");
+        wskaznik_wykres[30]->przygotowywanie_obiektu("Cisn altimu stacja[hPa]", "czas[s]");
+        wskaznik_wykres[31]->przygotowywanie_obiektu("Roznica wysokosci[m]", "czas[s]");
+        wskaznik_wykres[32]->przygotowywanie_obiektu("Odleglosc prosta[m]", "czas[s]");
+        wskaznik_wykres[33]->przygotowywanie_obiektu("Odleglosc calkowita[m]", "czas[s]");
+        wskaznik_wykres[34]->przygotowywanie_obiektu("Kat wysokosc", "czas[s]");
+        wskaznik_wykres[35]->przygotowywanie_obiektu("Kat obrot", "czas[s]");
+    }
+
+    while(true)
+    {
+        std::future<bool> odbieranie_sygnalu(std::async(launch::async,odbieranie_danych, &odebrano));
+
+        while(odebrano == 0)
+        {
+            czas_start = clock();
+
+            ruch_myszki = 0;
+
+            rect_myszka.ruch_x = 0;
+            rect_myszka.ruch_y = 0;
+
+            {//OBSLUGA WYDARZEN
+                while(SDL_PollEvent(&wydarzenie))
+                {
+                    if(wydarzenie.type == SDL_MOUSEMOTION)
+                    {
+                        rect_myszka.ruch_x += wydarzenie.motion.x - rect_myszka.x;
+                        rect_myszka.ruch_y += wydarzenie.motion.y - rect_myszka.y;
+                        rect_myszka.x = wydarzenie.motion.x;
+                        rect_myszka.y = wydarzenie.motion.y;
+                        ruch_myszki = 1;
+                    }
+
+                    if(wydarzenie.type == SDL_WINDOWEVENT)
+                    {
+                        if(wydarzenie.window.event == SDL_WINDOWEVENT_SIZE_CHANGED || wydarzenie.window.event == SDL_WINDOWEVENT_RESIZED)
+                        {
+                            SDL_GetWindowSize(okno, &rect_okno.w, &rect_okno.h);
+                        }
+                    }
+
+                    if(wydarzenie.type == SDL_QUIT)
+                    {
+                        SDL_DestroyRenderer(ekran);
+                        SDL_DestroyWindow(okno);
+
+                        TTF_CloseFont(czcionka_12);
+                        TTF_CloseFont(czcionka_16);
+
+                        SDL_FreeCursor(kursor_tradycyjny);
+                        SDL_FreeCursor(kursor_reka_klik);
+                        SDL_FreeCursor(kursor_strzalka_ukos_malejacy);
+                        SDL_FreeCursor(kursor_strzalka_ukos_rosnacy);
+                        SDL_FreeCursor(kursor_strzalka_poziom);
+                        SDL_FreeCursor(kursor_strzalka_pion);
+                        SDL_FreeCursor(kursor_wpisywanie_tekstu);
+                        SDL_FreeCursor(kursor_przesuwanie);
+
+                        CloseHandle(hSerial);
+                        cout<<"KONIEC"<<endl;
+                        return 0;
+                    }
+
+                    if(wydarzenie.type == SDL_MOUSEBUTTONDOWN)
+                    {
+                        if(wydarzenie.button.button == SDL_BUTTON_LEFT)
+                        {
+                            wcisniety_lewy_przycisk_myszy = 1;
+                        }
+                    }
+                    if(wydarzenie.type == SDL_MOUSEBUTTONUP)
+                    {
+                        if(wydarzenie.button.button == SDL_BUTTON_LEFT)
+                        {
+                            wcisniety_lewy_przycisk_myszy = 0;
+                        }
+                    }
+
+                    if(wydarzenie.type == SDL_KEYDOWN)
+                    {
+                        if(wydarzenie.key.keysym.sym == SDLK_LSHIFT)
+                        {
+                            wcisniety_shift = 1;
+                        }
+                    }
+                    if(wydarzenie.type == SDL_KEYUP)
+                    {
+                        if(wydarzenie.key.keysym.sym == SDLK_LSHIFT)
+                        {
+                            wcisniety_shift = 0;
+                        }
+                    }
+                }
+            }//KONIEC - OBSLUGA WYDARZEN
+
+
+            {//WYSWIETLANIE OBRAZU
+                SDL_SetRenderDrawColor(ekran, 0, 0, 0, SDL_ALPHA_OPAQUE);
+                SDL_RenderClear(ekran);
+
+                for(int i=0; i<liczba_wykresow; i++)
+                {
+                    wskaznik_wykres[i]->wyswietlanie_wykresu();
+                }
+
+                lista_dzialajacych.wyswietlanie_lista_dzialajacych();
+
+                tabela_COM.wyswietlanie_tabela_COM();
+
+                co_robi_cansat.wyswietlanie_co_robi_cansat();
+
+                SDL_RenderPresent(ekran);
+            }//KONIEC - WYSWIETLANIE OBRAZU
+
+            if(ruch_myszki == 1 || wcisniety_shift == 1)
+            {
+                if(wcisniety_lewy_przycisk_myszy == 0)
+                {
+                    myszka_najechala_na_wykres = 0;
+                    myszka_najechala_na_lista_dzialajacych = 0;
+                    myszka_najechala_na_tabela_COM = 0;
+                    myszka_najechala_na_co_robi_cansat = 0;
+
+                    if(wcisniety_shift == 1)
+                    {
+                        for(int i=0; i<liczba_wykresow; i++)
+                        {
+                            if(myszka_najechala_na_wykres == 0)
+                            {
+                                if(wskaznik_wykres[i]->sprawdzanie_myszka_na_wykresie())
+                                {
+                                    wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
+                                    wskaznik_funkcji_wykres = &klasa_wykres::przesuwanie_wykresu;
+                                    myszka_najechala_na_wykres = 1;
+                                }
+                            }
+                        }
+                        if(myszka_najechala_na_wykres == 0)
+                        {
+                            if(lista_dzialajacych.sprawdzanie_myszka_na_lista_dzialajacych())
+                            {
+                                myszka_najechala_na_lista_dzialajacych = 1;
+                            }
+                        }
+                        if(myszka_najechala_na_wykres == 0 && myszka_najechala_na_lista_dzialajacych == 0)
+                        {
+                            if(tabela_COM.sprawdzanie_myszka_na_tabela_COM())
+                            {
+                                myszka_najechala_na_tabela_COM = 1;
+                            }
+                        }
+                        if(myszka_najechala_na_wykres == 0 && myszka_najechala_na_lista_dzialajacych == 0 && myszka_najechala_na_co_robi_cansat == 0)
+                        {
+                            if(co_robi_cansat.sprawdzanie_myszka_na_co_robi_cansat())
+                            {
+                                myszka_najechala_na_co_robi_cansat = 1;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        //sprawdzanie czy myszka najechala na krawedzie wykresow
+                        for(int i=0; i<liczba_wykresow; i++)
+                        {
+                            if(myszka_najechala_na_wykres == 0)
+                            {
+                                if(wskaznik_wykres[i]->sprawdzanie_myszka_na_krawedzi_pionowej())
+                                {
+                                    wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
+                                    wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_szerokosc_kursor;
+                                    myszka_najechala_na_wykres = 1;
+                                }
+                                else if(wskaznik_wykres[i]->sprawdzanie_myszka_na_krawedzi_poziomej())
+                                {
+                                    wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
+                                    wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_wysokosc_kursor;
+                                    myszka_najechala_na_wykres = 1;
+                                }
+                                else if(wskaznik_wykres[i]->sprawdzanie_myszka_na_rogu())
+                                {
+                                    wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
+                                    wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_wszystko_kursor;
+                                    myszka_najechala_na_wykres = 1;
+                                }
+                            }
+                        }
+
+                    }
+
+                    //jesli myszka nie najechala na nic
+                    if(myszka_najechala_na_wykres == 0 && myszka_najechala_na_lista_dzialajacych == 0 && myszka_najechala_na_tabela_COM == 0 && myszka_najechala_na_co_robi_cansat == 0)
+                    {
+                        if(aktualny_wyglad_kursora != 0)
+                        {
+                            SDL_SetCursor(kursor_tradycyjny);
+                            aktualny_wyglad_kursora = 0;
+                        }
+                        wskaznik_wykres_dostosowywanie = NULL;
+                    }
+                }
+                else //jesli jest wcisniety lewy przycisk myszy
+                {
+                    //wykonuje dostosowywanie odpowiedniej f-cji
+                    if(myszka_najechala_na_wykres == 1)
+                    {
+                        if(wskaznik_wykres_dostosowywanie != NULL)
+                        {
+                            (*wskaznik_wykres_dostosowywanie.*wskaznik_funkcji_wykres)();
+                        }
+                    }
+                    else if(myszka_najechala_na_lista_dzialajacych == 1)
+                    {
+                        lista_dzialajacych.przesuwanie_lista_dzialajacych();
+                    }
+                    else if(myszka_najechala_na_tabela_COM == 1)
+                    {
+                        tabela_COM.przesuwanie_tabela_COM();
+                    }
+                    else if(myszka_najechala_na_co_robi_cansat == 1)
+                    {
+                        co_robi_cansat.przesuwanie_co_robi_CanSat();
+                    }
+                }
+            }
+
+            czas_stop = clock();
+            if(czas_stop - czas_start < 30)
+            {
+                SDL_Delay(30 - clock() + czas_start);
+            }
+            else
+            {
+                cout<<"nie daje rady"<<endl;
+            }
+        }//koniec "while(odebrano == 0)"
+
+        odebrano = 0;
+        if(odbieranie_sygnalu.get() == 1)
+        {
+            wysylanie_danych("Test 48_,");
+            dopisywanie_do_wykresow(wskaznik_wykres);
+            lista_dzialajacych.aktualizacja_dzialajacych(spis_dzialajacych);
+        }
+
+
+    }//koniec "while(true)"
+
+    return 0;
+}
