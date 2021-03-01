@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <sstream>
 #include <cmath>
+#include <vector>
+#include <fstream>
 
 #include <windows.h>
 #include <tchar.h>
@@ -23,6 +25,10 @@ public:
     int y;
     int ruch_x;
     int ruch_y;
+    int ruch_scroll;
+    bool wcisniety_lewy_przycisk_myszy;
+    bool zmiana_wcisniecia;
+    bool ruch_myszki;
 
     klasa_myszka()
     {
@@ -30,6 +36,11 @@ public:
         y = 0;
         ruch_x = 0;
         ruch_y = 0;
+        ruch_scroll = 0;
+
+        wcisniety_lewy_przycisk_myszy = 0;
+        zmiana_wcisniecia = 0;
+        ruch_myszki = 0;
     }
     ~klasa_myszka()
     {
@@ -43,9 +54,15 @@ SDL_Renderer *ekran;
 
 SDL_Rect rect_okno;
 
+int numer_pomiaru = 0;
 int godzina = 0;
 int minuta = 0;
 int sekunda = 0;
+int kolor_jasnosc = 0;
+int kolor_czerwony = 0;
+int kolor_zielony = 0;
+int kolor_niebieski = 0;
+int odleglosc_przeszkoda = 0;
 double lokalizacja[2] = {0, 0};
 char lokalizacja_znak[2] = {' ', ' '};
 double wysokosc = 0;
@@ -71,13 +88,14 @@ double odleglosc_prosta = 0;
 double odleglosc_calkowita = 0;
 double kat_wysokosc = 0;
 double kat_obrot = 0;
+double magnetometr_stacja[3] = {0, 0, 0};
 int spis_dzialajacych_stacja = 0;
 int RSSI_stacja = 0;
 
 TTF_Font* czcionka_12;
 TTF_Font* czcionka_16;
 
-klasa_myszka rect_myszka;
+klasa_myszka myszka;
 
 SDL_Cursor *kursor_tradycyjny;              //0
 SDL_Cursor *kursor_reka_klik;               //1
@@ -94,9 +112,23 @@ HANDLE hSerial = CreateFile ("\\\\.\\COM12", GENERIC_READ | GENERIC_WRITE, 0, NU
 
 //KONIEC ZMIENNYCH GLOBALNYCH
 
+int potega(int liczba, int potega)
+{
+    if (potega == 0)
+    {
+        return 1;
+    }
+    int liczba_poczatkowa = liczba;
+    for (int i = 1; i < potega; i++)
+    {
+        liczba_poczatkowa *= liczba;
+    }
+    return liczba_poczatkowa;
+}
+
 bool sprawdzanie_czy_najechala_myszka(int x, int y, int w, int h)
 {
-    if(rect_myszka.x > x && rect_myszka.x < x+w && rect_myszka.y > y && rect_myszka.y < y+h)
+    if(myszka.x > x && myszka.x < x+w && myszka.y > y && myszka.y < y+h)
     {
         return 1;
     }
@@ -108,7 +140,7 @@ bool sprawdzanie_czy_najechala_myszka(int x, int y, int w, int h)
 
 void przesuwanie_obiektu(int &nowe_x, int &nowe_y, int x, int y, int w, int h, int ograniczenie_prawo, int ograniczenie_lewo, int ograniczenie_gora, int ograniczenie_dol)
 {
-    int nowe_x_obiekt = x + rect_myszka.ruch_x;
+    int nowe_x_obiekt = x + myszka.ruch_x;
 
     if(nowe_x_obiekt < ograniczenie_lewo)
     {
@@ -123,7 +155,7 @@ void przesuwanie_obiektu(int &nowe_x, int &nowe_y, int x, int y, int w, int h, i
         nowe_x = nowe_x_obiekt;
     }
 
-    int nowe_y_obiekt = y + rect_myszka.ruch_y;
+    int nowe_y_obiekt = y + myszka.ruch_y;
 
     if(nowe_y_obiekt  < ograniczenie_gora)
     {
@@ -148,14 +180,14 @@ void tekst_to_texture(SDL_Texture* &obraz_napis, string tekst, Uint8 r, Uint8 g,
     switch(wielkosc_czcionki)
     {
     case 16:
-        {
-            surface_napis = TTF_RenderText_Blended(czcionka_16, tekst.c_str(), kolor);
-        }
+    {
+        surface_napis = TTF_RenderText_Blended(czcionka_16, tekst.c_str(), kolor);
+    }
     case 12:
     default:
-        {
-            surface_napis = TTF_RenderText_Blended(czcionka_12, tekst.c_str(), kolor);
-        }
+    {
+        surface_napis = TTF_RenderText_Blended(czcionka_12, tekst.c_str(), kolor);
+    }
     }
 
     obraz_napis = SDL_CreateTextureFromSurface(ekran, surface_napis);
@@ -180,13 +212,14 @@ protected:
     SDL_Rect rect_obraz;
 
 public:
-    klasa_obraz(string sciezka, int rect_x, int rect_y, int rect_w, int rect_h)
+    klasa_obraz(string sciezka, int x, int y, int w, int h)
     {
         obraz_obraz = surface_to_texture(sciezka);
-        rect_obraz.x = rect_x;
-        rect_obraz.y = rect_y;
-        rect_obraz.w = rect_w;
-        rect_obraz.h = rect_h;
+
+        rect_obraz.x = x;
+        rect_obraz.y = y;
+        rect_obraz.w = w;
+        rect_obraz.h = h;
     }
 
     ~klasa_obraz()
@@ -223,21 +256,33 @@ class klasa_tekst
 private:
     SDL_Texture *obraz_tekst;
     SDL_Rect rect_tekst;
+    string tekst_na_obrazie;
 public:
     klasa_tekst(string tekst, int x, int y, Uint8 r, Uint8 g, Uint8 b, int wielkosc_czcionki)
     {
+        zmiana_tekstu(tekst, x, y, r, g, b, wielkosc_czcionki);
+    }
+
+    klasa_tekst()
+    {
+        ;
+    }
+
+    void zmiana_tekstu(string tekst, int x, int y, Uint8 r, Uint8 g, Uint8 b, int wielkosc_czcionki)
+    {
+        tekst_na_obrazie = tekst;
+
         tekst_to_texture(obraz_tekst, tekst, r, g, b, wielkosc_czcionki);
 
         SDL_QueryTexture(obraz_tekst, NULL, NULL, &(rect_tekst.w), &(rect_tekst.h));
         rect_tekst.x = x;
         rect_tekst.y = y;
-
-        cout<<rect_tekst.w<<" "<<rect_tekst.h<<endl;
     }
 
     ~klasa_tekst()
     {
         SDL_DestroyTexture(obraz_tekst);
+        cout<<"Usuwanie tekstu: "<<tekst_na_obrazie<<endl;
     }
 
     void wyswietlanie_tekstu()
@@ -245,10 +290,22 @@ public:
         SDL_RenderCopy(ekran, obraz_tekst, NULL, &rect_tekst);
     }
 
+    void wyswietlanie_tekstu_inne_wspolrzedne(int x, int y)
+    {
+        rect_tekst.x = x;
+        rect_tekst.y = y;
+        SDL_RenderCopy(ekran, obraz_tekst, NULL, &rect_tekst);
+    }
+
     void zmiana_polozenia_tekstu(int x, int y)
     {
         rect_tekst.x = x;
         rect_tekst.y = y;
+    }
+
+    int zwroc_w()
+    {
+        return rect_tekst.w;
     }
 };
 
@@ -259,6 +316,7 @@ private:
     SDL_Rect rect_obramowka;
     SDL_Texture *obraz_tekst;
     SDL_Rect rect_tekst;
+    bool myszka_na_przycisku;
 
 public:
     klasa_przycisk(int x, int y, int w, int h, string tekst)
@@ -277,6 +335,7 @@ public:
         SDL_QueryTexture(obraz_tekst, NULL, NULL, &(rect_tekst.w), &(rect_tekst.h));
         rect_tekst.x = rect_przycisk.x + rect_przycisk.w/2 - rect_tekst.w/2;
         rect_tekst.y = rect_przycisk.y + rect_przycisk.h/2 - rect_tekst.h/2;
+        myszka_na_przycisku = 0;
     }
 
     ~klasa_przycisk()
@@ -295,6 +354,22 @@ public:
         SDL_RenderCopy(ekran, obraz_tekst, NULL, &rect_tekst);
     }
 
+    bool sprawdzanie_myszka_na_przycisku()
+    {
+        if(sprawdzanie_czy_najechala_myszka(rect_przycisk.x, rect_przycisk.y, rect_przycisk.w, rect_przycisk.h))
+        {
+            if(aktualny_wyglad_kursora != 1)
+            {
+                SDL_SetCursor(kursor_reka_klik);
+                aktualny_wyglad_kursora = 1;
+            }
+            myszka_na_przycisku = 1;
+            return 1;
+        }
+        myszka_na_przycisku = 0;
+        return 0;
+    }
+
     void zmiana_polozenia_przycisku(int x, int y)
     {
         rect_przycisk.x = x;
@@ -305,6 +380,346 @@ public:
 
         rect_tekst.x = rect_przycisk.x + rect_przycisk.w/2 - rect_tekst.w/2;
         rect_tekst.y = rect_przycisk.y + rect_przycisk.h/2 - rect_tekst.h/2;
+    }
+
+    bool zwroc_myszka_na_przycisku()
+    {
+        return myszka_na_przycisku;
+    }
+};
+
+class klasa_wybieranie_scrollem
+{
+private:
+    SDL_Rect rect_wybieranie_scrollem;
+    int aktualny_wybor;
+    int liczba_wyborow;
+    string *tablica_napisow;
+    klasa_tekst *tablica_obrazow;
+    bool myszka_na_wybieranie_scrollem;
+
+public:
+    klasa_wybieranie_scrollem(int x, int y, int w, int h, int liczba_wyborow_)
+    {
+        if(liczba_wyborow_ <= 0)
+        {
+            liczba_wyborow_ = 1;
+        }
+
+        rect_wybieranie_scrollem.x = x;
+        rect_wybieranie_scrollem.y = y;
+        rect_wybieranie_scrollem.w = w;
+        rect_wybieranie_scrollem.h = h;
+
+        aktualny_wybor = 0;
+
+        liczba_wyborow = liczba_wyborow_;
+
+        tablica_napisow = new string[liczba_wyborow];
+        tablica_obrazow = new klasa_tekst[liczba_wyborow];
+
+        myszka_na_wybieranie_scrollem = 0;
+    }
+
+    ~klasa_wybieranie_scrollem()
+    {
+        delete [] tablica_napisow;
+        delete [] tablica_obrazow;
+    }
+
+    void wyswietlanie_wybieranie_scrollem()
+    {
+        SDL_SetRenderDrawColor(ekran, 169, 169, 169, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(ekran, &rect_wybieranie_scrollem);
+
+        SDL_SetRenderDrawColor(ekran, 105, 105, 105, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawLine(ekran, rect_wybieranie_scrollem.x+5, rect_wybieranie_scrollem.y, rect_wybieranie_scrollem.x+5, rect_wybieranie_scrollem.y+rect_wybieranie_scrollem.h);
+        SDL_RenderDrawLine(ekran, rect_wybieranie_scrollem.x+rect_wybieranie_scrollem.w-5, rect_wybieranie_scrollem.y, rect_wybieranie_scrollem.x+rect_wybieranie_scrollem.w-5, rect_wybieranie_scrollem.y+rect_wybieranie_scrollem.h);
+
+        tablica_obrazow[aktualny_wybor].wyswietlanie_tekstu();
+    }
+
+    void zmiana_wyboru()
+    {
+        if(myszka.ruch_scroll > 0)
+        {
+            aktualny_wybor++;
+            if(aktualny_wybor > liczba_wyborow-1)
+            {
+                aktualny_wybor = liczba_wyborow-1;
+            }
+        }
+        else if(myszka.ruch_scroll < 0)
+        {
+            aktualny_wybor--;
+            if(aktualny_wybor < 0)
+            {
+                aktualny_wybor = 0;
+            }
+        }
+    }
+
+    void dopisz_wybor(string tekst_do_wyboru, int r, int g, int b, int wielkosc_czcionki, int numer_wyboru)
+    {
+        if(numer_wyboru > liczba_wyborow || numer_wyboru < 0)
+        {
+            numer_wyboru = 0;
+        }
+
+        tablica_napisow[numer_wyboru] = tekst_do_wyboru;
+        tablica_obrazow[numer_wyboru].zmiana_tekstu(tekst_do_wyboru, rect_wybieranie_scrollem.x+10, rect_wybieranie_scrollem.y+5, r, g, b, wielkosc_czcionki);
+    }
+
+    bool sprawdzanie_myszka_na_wybieranie_scrollem()
+    {
+        if(sprawdzanie_czy_najechala_myszka(rect_wybieranie_scrollem.x, rect_wybieranie_scrollem.y, rect_wybieranie_scrollem.w, rect_wybieranie_scrollem.h))
+        {
+            myszka_na_wybieranie_scrollem = 1;
+            return 1;
+        }
+        myszka_na_wybieranie_scrollem = 0;
+        return 0;
+    }
+
+    int zwroc_aktualny_wybor()
+    {
+        return aktualny_wybor;
+    }
+
+    void ustaw_aktualny_wybor(int numer_wyboru)
+    {
+        aktualny_wybor = numer_wyboru;
+    }
+
+    void zmiana_polozenia_wybieranie_scrollem(int x, int y)
+    {
+        rect_wybieranie_scrollem.x = x;
+        rect_wybieranie_scrollem.y = y;
+
+        for(int i=0; i<liczba_wyborow; i++)
+        {
+            tablica_obrazow[i].zmiana_polozenia_tekstu(rect_wybieranie_scrollem.x+10, rect_wybieranie_scrollem.y+5);
+        }
+    }
+
+    bool zwroc_myszka_na_wybieranie_scrollem()
+    {
+        return myszka_na_wybieranie_scrollem;
+    }
+};
+
+class klasa_wpisywanie_klawiatura
+{
+private:
+    SDL_Rect rect_wpisywanie_klawiatura;
+    klasa_tekst *tablica_znakow;
+    vector <int> tablica_dopisanych_znakow;
+    bool myszka_na_wpisywanie_klawiatura;
+    bool aktywne_wpisywanie;
+    int timer;
+    double liczba;
+
+public:
+    klasa_wpisywanie_klawiatura(int x, int y, int w, int h)
+    {
+        rect_wpisywanie_klawiatura.x = x;
+        rect_wpisywanie_klawiatura.y = y;
+        rect_wpisywanie_klawiatura.w = w;
+        rect_wpisywanie_klawiatura.h = h;
+
+        tablica_znakow = new klasa_tekst[11];
+        tablica_znakow[0].zmiana_tekstu("0", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[1].zmiana_tekstu("1", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[2].zmiana_tekstu("2", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[3].zmiana_tekstu("3", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[4].zmiana_tekstu("4", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[5].zmiana_tekstu("5", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[6].zmiana_tekstu("6", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[7].zmiana_tekstu("7", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[8].zmiana_tekstu("8", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[9].zmiana_tekstu("9", 0, 0, 0, 0, 0, 12);
+        tablica_znakow[10].zmiana_tekstu(".", 0, 0, 0, 0, 0, 12);
+
+        myszka_na_wpisywanie_klawiatura = 0;
+        aktywne_wpisywanie = 0;
+        timer = 0;
+        liczba = 0;
+    }
+
+    ~klasa_wpisywanie_klawiatura()
+    {
+        delete [] tablica_znakow;
+    }
+
+    void wyswietlanie_wpisywanie_klawiatura()
+    {
+        SDL_SetRenderDrawColor(ekran, 255, 255, 255, SDL_ALPHA_OPAQUE);
+        SDL_RenderFillRect(ekran, &rect_wpisywanie_klawiatura);
+
+        SDL_SetRenderDrawColor(ekran, 105, 105, 105, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawRect(ekran, &rect_wpisywanie_klawiatura);
+
+        int aktualny_x = 3;
+        for(unsigned int i=0; i<tablica_dopisanych_znakow.size(); i++)
+        {
+            tablica_znakow[tablica_dopisanych_znakow[i]].wyswietlanie_tekstu_inne_wspolrzedne(rect_wpisywanie_klawiatura.x + aktualny_x, rect_wpisywanie_klawiatura.y + 3);
+            aktualny_x += tablica_znakow[tablica_dopisanych_znakow[i]].zwroc_w();
+        }
+
+        if(aktywne_wpisywanie == 1)
+        {
+            timer++;
+            if(timer < 16)
+            {
+                SDL_SetRenderDrawColor(ekran, 0, 0, 0, SDL_ALPHA_OPAQUE);
+                SDL_RenderDrawLine(ekran, rect_wpisywanie_klawiatura.x + aktualny_x, rect_wpisywanie_klawiatura.y + 3, rect_wpisywanie_klawiatura.x + aktualny_x, rect_wpisywanie_klawiatura.y + 14);
+            }
+
+            if(timer >= 32)
+            {
+                timer = 0;
+            }
+        }
+    }
+
+    void dopisywanie_znaku(char znak)
+    {
+        if(aktywne_wpisywanie == 1)
+        {
+            if(znak == ',')
+            {
+                znak = '.';
+            }
+
+            if(tablica_dopisanych_znakow.size() == 1 && tablica_dopisanych_znakow[0] == 0)
+            {
+                tablica_dopisanych_znakow.pop_back();
+            }
+
+            if(znak == '.' && tablica_dopisanych_znakow.size() == 0)
+            {
+                tablica_dopisanych_znakow.push_back(0);
+                tablica_dopisanych_znakow.push_back(10);
+            }
+
+            if(tablica_dopisanych_znakow.size() < 12)
+            {
+                if(znak == '.')
+                {
+                    bool wpisany_przecinek = 0;
+
+                    for(unsigned int i=0; i<tablica_dopisanych_znakow.size(); i++)
+                    {
+                        if(tablica_dopisanych_znakow[i] == 10)
+                        {
+                            wpisany_przecinek = 1;
+                            i = 20;
+                        }
+                    }
+
+                    if(wpisany_przecinek == 0)
+                    {
+                        tablica_dopisanych_znakow.push_back(10);
+                    }
+                }
+                else
+                {
+                    char tablica_znakow_char[10] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+
+                    for(int i=0; i<11; i++)
+                    {
+                        if(znak == tablica_znakow_char[i])
+                        {
+                            tablica_dopisanych_znakow.push_back(i);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void usuwanie_ostatniego_znaku()
+    {
+        if(aktywne_wpisywanie)
+        {
+            if(tablica_dopisanych_znakow.size() > 0)
+            {
+                tablica_dopisanych_znakow.pop_back();
+            }
+        }
+    }
+
+    bool sprawdzanie_myszka_na_wpisywanie_klawiatura()
+    {
+        if(sprawdzanie_czy_najechala_myszka(rect_wpisywanie_klawiatura.x, rect_wpisywanie_klawiatura.y, rect_wpisywanie_klawiatura.w, rect_wpisywanie_klawiatura.h))
+        {
+            if(aktualny_wyglad_kursora != 6)
+            {
+                SDL_SetCursor(kursor_wpisywanie_tekstu);
+                aktualny_wyglad_kursora = 6;
+            }
+            myszka_na_wpisywanie_klawiatura = 1;
+            return 1;
+        }
+        myszka_na_wpisywanie_klawiatura = 0;
+        return 0;
+    }
+
+    void obliczenie_liczby()
+    {
+        liczba = 0;
+        int przecinek = tablica_dopisanych_znakow.size();
+        for(unsigned int i=0; i<tablica_dopisanych_znakow.size(); i++)
+        {
+            if(tablica_dopisanych_znakow[i] == 10)
+            {
+                przecinek = i;
+            }
+        }
+
+        for(int i=0; i<przecinek; i++)
+        {
+            liczba += tablica_dopisanych_znakow[i]*potega(10, przecinek-1-i);
+        }
+
+        for(unsigned int i=przecinek+1; i<tablica_dopisanych_znakow.size(); i++)
+        {
+            liczba += double(tablica_dopisanych_znakow[i])/potega(10, i-przecinek);
+        }
+        cout<<"liczba: "<<liczba<<endl;
+    }
+
+    void zmiana_polozenia_wpisywanie_klawiatura(int x, int y)
+    {
+        rect_wpisywanie_klawiatura.x = x;
+        rect_wpisywanie_klawiatura.y = y;
+    }
+
+    void sprawdz_klikniecie()
+    {
+        if(myszka_na_wpisywanie_klawiatura)
+        {
+            aktywne_wpisywanie = 1;
+        }
+        else
+        {
+            aktywne_wpisywanie = 0;
+        }
+    }
+
+    bool zwroc_aktywne_wpisywanie()
+    {
+        return aktywne_wpisywanie;
+    }
+
+    void ustaw_aktywne_wpisywanie_klawiatura(bool aktywne)
+    {
+        aktywne_wpisywanie = aktywne;
+    }
+
+    double zwroc_liczba()
+    {
+        return liczba;
     }
 };
 
@@ -581,7 +996,7 @@ public:
 
     void zmiana_wielkosci_wykresu_wysokosc_kursor()
     {
-        int nowa_wysokosc = rect_myszka.y - rect_wykres.y - odleglosc_od_krawedzi_dolnej;
+        int nowa_wysokosc = myszka.y - rect_wykres.y - odleglosc_od_krawedzi_dolnej;
         if(nowa_wysokosc <= 100)
         {
             rect_wykres.h = 100;
@@ -598,7 +1013,7 @@ public:
 
     void zmiana_wielkosci_wykresu_szerokosc_kursor()
     {
-        int nowa_szerokosc = rect_myszka.x - rect_wykres.x - odleglosc_od_krawedzi_prawej;
+        int nowa_szerokosc = myszka.x - rect_wykres.x - odleglosc_od_krawedzi_prawej;
         if(nowa_szerokosc <= 100)
         {
             rect_wykres.w = 100;
@@ -655,6 +1070,10 @@ public:
     virtual void dopisz(double liczba) = 0;
 
     virtual void wyswietlanie_wykresu() = 0;
+
+    virtual int zwroc_ostatnia_wartosc_int() = 0;
+
+    virtual double zwroc_ostatnia_wartosc_double() = 0;
 };
 
 class klasa_wykres_int:public klasa_wykres
@@ -751,6 +1170,11 @@ public:
         int nowe_max_y = najwieksza_wartosc() + 1;
 
         int zakres_wartosci = nowe_max_y - nowe_min_y;
+        if(zakres_wartosci%4 != 0)
+        {
+            nowe_max_y += 4 - zakres_wartosci%4;
+            zakres_wartosci = nowe_max_y - nowe_min_y;
+        }
 
         if(zakres_wartosci >= 2)
         {
@@ -790,6 +1214,16 @@ public:
                 klasa_wykres::wyswietlanie_linie_wykresu();
             }
         }
+    }
+
+    int zwroc_ostatnia_wartosc_int()
+    {
+        return tablica_danych[599];
+    }
+
+    double zwroc_ostatnia_wartosc_double()
+    {
+        return -1;
     }
 };
 
@@ -883,12 +1317,12 @@ public:
 
     void tworzenie_tablicy_wspolrzednych()
     {
-        double nowe_min_y = floor(najmniejsza_wartosc()) - 1;
-        double nowe_max_y = ceil(najwieksza_wartosc()) + 1;
+        double nowe_min_y = ceil(najmniejsza_wartosc()) - 1;
+        double nowe_max_y = floor(najwieksza_wartosc()) + 1;
 
         double zakres_wartosci = nowe_max_y - nowe_min_y;
 
-        if(zakres_wartosci >= 2)
+        if(zakres_wartosci >= 1)
         {
             if(min_y != nowe_min_y || max_y != nowe_max_y)
             {
@@ -927,7 +1361,78 @@ public:
             }
         }
     }
+
+    int zwroc_ostatnia_wartosc_int()
+    {
+        return -1;
+    }
+
+    double zwroc_ostatnia_wartosc_double()
+    {
+        return tablica_danych[599];
+    }
 };
+
+//ZMIENNE GLOBALNE (WYKRESY)
+const int liczba_wykresow_int = 14;
+const int liczba_wykresow_double = 31;
+const int liczba_wykresow = liczba_wykresow_int + liczba_wykresow_double;
+
+klasa_wykres_int tablica_wykresow_int[liczba_wykresow_int];
+klasa_wykres_double tablica_wykresow_double[liczba_wykresow_double];
+
+klasa_wykres *wskaznik_wykres[liczba_wykresow];
+
+/*
+TABLICA_WYKRESOW_INT:
+0 - wykres_numer_pomiaru
+1 - wykres_godzina
+2 - wykres_minuta
+3 - wykres_sekunda
+4 - wykres_kolor_janosc
+5 - wykres_kolor_czerwony
+6 - wykres_kolor_zielony
+7 - wykres_kolor_niebieski
+8 - wykres_odleglosc_przeszkoda
+9 - wykres_spis_dzialajacych
+10 - wykres_opis_dzialania
+11 - wykres_RSSI_cansat
+12 - wykres_spis_dzialajacych_stacja
+13 - wykres_RSSI_stacja
+
+TABLICA_WYKRESOW_DOUBLE:
+14 - wykres_lokalizacja0
+15 - wykres_lokalizacja1
+16 - wykres_wysokosc
+17 - wykres_temperatura_DS18B20
+18 - wykres_temperatura_SHT
+19 - wykres_wilgotnosc
+20 - wykres_akcelerometr0
+21 - wykres_akcelerometr1
+22 - wykres_akcelerometr2
+23 - wykres_zyroskop0
+24 - wykres_zyroskop1
+25 - wykres_zyroskop2
+26 - wykres_magnetometr0
+27 - wykres_magnetometr1
+28 - wykres_magnetometr2
+29 - wykres_temperatura_altimu
+30 - wykres_cisnienie_altimu
+31 - wykres_wilgotnosc_ziemi
+32 - wykres_napiecie_baterii
+33 - wykres_lokalizacja_stacja0
+34 - wykres_lokalizacja_stacja1
+35 - wykres_temperatura_altimu_stacja
+36 - wykres_cisnienie_altimu_stacja
+37 - wykres_magnetometr_stacja0
+38 - wykres_magnetometr_stacja1
+39 - wykres_magnetometr_stacja2
+40 - wykres_roznica_wysokosci
+41 - wykres_odleglosc_prosta
+42 - wykres_odleglosc_calkowita
+43 - wykres_kat_wysokosc
+44 - wykres_kat_obrot*/
+//ZMIENNE GLOBALNE (WYKRESY) - KONIEC
 
 class klasa_lista_dzialajacych
 {
@@ -941,6 +1446,7 @@ private:
     klasa_obraz obraz_dallas;
     klasa_obraz obraz_SD;
     klasa_obraz obraz_GPS;
+    klasa_obraz obraz_czujnik_kolorow;
     int znalezione_SHT;
     int znalezione_altimu_akce_zyro;
     int znalezione_altimu_temp_cisn;
@@ -948,6 +1454,7 @@ private:
     int znalezione_dallas;
     int znalezione_SD;
     int znalezione_GPS;
+    int znalezione_czujnik_kolorow;
 
     SDL_Rect rect_lista_dzialajacych;
 
@@ -955,10 +1462,10 @@ private:
 
 public:
     klasa_lista_dzialajacych() :obraz_correct("correct.bmp", 300, 300, 50, 50), obraz_incorrect("incorrect.bmp", 350, 300, 50, 50),
-                          obraz_SHT("SHT.bmp", 10, 10, 80, 80), obraz_altimu_akce_zyro("altimu_akce_zyro.bmp", 10, 90, 80, 80),
-                          obraz_altimu_temp_cisn("altimu_temp_cisn.bmp", 10, 170, 80, 80), obraz_altimu_mag("altimu_mag.bmp", 10, 250, 80, 80),
-                          obraz_dallas("dallas.bmp", 10, 330, 80, 80), obraz_SD("SD.bmp", 10, 410, 80, 80),
-                          obraz_GPS("gps.bmp", 10, 490, 80, 80)
+        obraz_SHT("SHT.bmp", 10, 10, 80, 80), obraz_altimu_akce_zyro("altimu_akce_zyro.bmp", 10, 90, 80, 80),
+        obraz_altimu_temp_cisn("altimu_temp_cisn.bmp", 10, 170, 80, 80), obraz_altimu_mag("altimu_mag.bmp", 10, 250, 80, 80),
+        obraz_dallas("dallas.bmp", 10, 330, 80, 80), obraz_SD("SD.bmp", 10, 410, 80, 80),
+        obraz_GPS("gps.bmp", 10, 490, 80, 80), obraz_czujnik_kolorow("czujnik_kolorow.bmp", 10, 570, 80, 80)
     {
         znalezione_SHT = 0;
         znalezione_altimu_akce_zyro = 0;
@@ -967,11 +1474,12 @@ public:
         znalezione_dallas = 0;
         znalezione_SD = 0;
         znalezione_GPS = 0;
+        znalezione_czujnik_kolorow = 0;
 
         rect_lista_dzialajacych.x = 10;
         rect_lista_dzialajacych.y = 10;
         rect_lista_dzialajacych.w = 160;
-        rect_lista_dzialajacych.h = 560;
+        rect_lista_dzialajacych.h = 640;
 
         widoczne_lista_dzialajacych = 1;
     }
@@ -1004,6 +1512,7 @@ public:
         obraz_dallas.wyswietlanie_obrazu();
         obraz_SD.wyswietlanie_obrazu();
         obraz_GPS.wyswietlanie_obrazu();
+        obraz_czujnik_kolorow.wyswietlanie_obrazu();
 
         SDL_SetRenderDrawColor(ekran, 0, 0, 0, SDL_ALPHA_OPAQUE);
         SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+80, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+80);
@@ -1012,8 +1521,9 @@ public:
         SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+320, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+320);
         SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+400, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+400);
         SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+480, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+480);
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+560, rect_lista_dzialajacych.x+160, rect_lista_dzialajacych.y+560);
 
-        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x+80, rect_lista_dzialajacych.y, rect_lista_dzialajacych.x+80, rect_lista_dzialajacych.y+560);
+        SDL_RenderDrawLine(ekran, rect_lista_dzialajacych.x+80, rect_lista_dzialajacych.y, rect_lista_dzialajacych.x+80, rect_lista_dzialajacych.y+640);
 
         wyswietlanie_correct_incorrect(znalezione_SHT, 15);
         wyswietlanie_correct_incorrect(znalezione_altimu_akce_zyro, 95);
@@ -1022,10 +1532,20 @@ public:
         wyswietlanie_correct_incorrect(znalezione_dallas, 335);
         wyswietlanie_correct_incorrect(znalezione_SD, 415);
         wyswietlanie_correct_incorrect(znalezione_GPS, 495);
+        wyswietlanie_correct_incorrect(znalezione_czujnik_kolorow, 575);
     }
 
     void aktualizacja_dzialajacych(int spis_dzialajacych)
     {
+        if (spis_dzialajacych / 512 == 1)
+        {
+            znalezione_czujnik_kolorow = 1;
+            spis_dzialajacych -= 512;
+        }
+        else
+        {
+            znalezione_czujnik_kolorow = 0;
+        }
         if (spis_dzialajacych / 256 == 1)
         {
             znalezione_SD = 1;
@@ -1127,34 +1647,67 @@ public:
         obraz_dallas.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+320);
         obraz_SD.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+400);
         obraz_GPS.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+480);
+        obraz_czujnik_kolorow.zmiana_wspolrzednych(rect_lista_dzialajacych.x, rect_lista_dzialajacych.y+560);
     }
 };
 
 class klasa_tabela_COM
 {
 private:
+    bool wlaczony_COM;
+    int aktualny_COM;
+    int znalezione_COM;
+    int wybrano_inny_COM;
     klasa_obraz obraz_correct;
     klasa_obraz obraz_incorrect;
     klasa_obraz obraz_USB;
-    klasa_przycisk przycisk_reset_COM;
+    klasa_wybieranie_scrollem wybieranie_scrollem;
+    klasa_przycisk przycisk_ustaw_COM;
+    klasa_przycisk przycisk_wlacz_COM;
+    klasa_przycisk przycisk_wylacz_COM;
+    klasa_obraz obraz_correct_maly;
+    klasa_obraz obraz_incorrect_maly;
     SDL_Rect rect_tabela_COM;
-    int znalezione_COM;
 
 public:
     klasa_tabela_COM() :obraz_correct("correct.bmp", 0, 0, 50, 50), obraz_incorrect("incorrect.bmp", 0, 0, 50, 50),
-                   obraz_USB("USB.bmp", 0, 0, 80, 80), przycisk_reset_COM(0, 0, 80, 30, "Reset COM")
+        obraz_USB("USB.bmp", 0, 0, 80, 80), wybieranie_scrollem(0, 0, 80, 25, 20), przycisk_ustaw_COM(0, 0, 80, 30, "Ustaw COM"),
+        przycisk_wlacz_COM(0, 0, 80, 30, "Wlacz COM"), przycisk_wylacz_COM(0, 0, 80, 30, "Wylacz COM"),
+        obraz_correct_maly("correct_maly.bmp", 0, 0, 30, 30), obraz_incorrect_maly("incorrect_maly.bmp", 0, 0, 30, 30)
     {
+        wlaczony_COM = 0;
+        aktualny_COM = 11;
+        znalezione_COM = 0;
+        wybrano_inny_COM = 0;
+
         rect_tabela_COM.x = 800;
         rect_tabela_COM.y = 100;
         rect_tabela_COM.w = 160;
-        rect_tabela_COM.h = 140;
-        znalezione_COM = 0;
+        rect_tabela_COM.h = 270;
+        przesuwanie_tabela_COM();
 
-        obraz_USB.zmiana_wspolrzednych(rect_tabela_COM.x, rect_tabela_COM.y);
-        obraz_correct.zmiana_wspolrzednych(rect_tabela_COM.x+95, rect_tabela_COM.y+15);
-        obraz_incorrect.zmiana_wspolrzednych(rect_tabela_COM.x+95, rect_tabela_COM.y+15);
-
-        przycisk_reset_COM.zmiana_polozenia_przycisku(rect_tabela_COM.x+40, rect_tabela_COM.y+95);
+        wybieranie_scrollem.zmiana_polozenia_wybieranie_scrollem(rect_tabela_COM.x+40, rect_tabela_COM.y+95);
+        wybieranie_scrollem.dopisz_wybor("COM1", 0, 0, 0, 12, 0);
+        wybieranie_scrollem.dopisz_wybor("COM2", 0, 0, 0, 12, 1);
+        wybieranie_scrollem.dopisz_wybor("COM3", 0, 0, 0, 12, 2);
+        wybieranie_scrollem.dopisz_wybor("COM4", 0, 0, 0, 12, 3);
+        wybieranie_scrollem.dopisz_wybor("COM5", 0, 0, 0, 12, 4);
+        wybieranie_scrollem.dopisz_wybor("COM6", 0, 0, 0, 12, 5);
+        wybieranie_scrollem.dopisz_wybor("COM7", 0, 0, 0, 12, 6);
+        wybieranie_scrollem.dopisz_wybor("COM8", 0, 0, 0, 12, 7);
+        wybieranie_scrollem.dopisz_wybor("COM9", 0, 0, 0, 12, 8);
+        wybieranie_scrollem.dopisz_wybor("COM10", 0, 0, 0, 12, 9);
+        wybieranie_scrollem.dopisz_wybor("COM11", 0, 0, 0, 12, 10);
+        wybieranie_scrollem.dopisz_wybor("COM12", 0, 0, 0, 12, 11);
+        wybieranie_scrollem.dopisz_wybor("COM13", 0, 0, 0, 12, 12);
+        wybieranie_scrollem.dopisz_wybor("COM14", 0, 0, 0, 12, 13);
+        wybieranie_scrollem.dopisz_wybor("COM15", 0, 0, 0, 12, 14);
+        wybieranie_scrollem.dopisz_wybor("COM16", 0, 0, 0, 12, 15);
+        wybieranie_scrollem.dopisz_wybor("COM17", 0, 0, 0, 12, 16);
+        wybieranie_scrollem.dopisz_wybor("COM18", 0, 0, 0, 12, 17);
+        wybieranie_scrollem.dopisz_wybor("COM19", 0, 0, 0, 12, 18);
+        wybieranie_scrollem.dopisz_wybor("COM20", 0, 0, 0, 12, 19);
+        wybieranie_scrollem.ustaw_aktualny_wybor(11);
     }
 
     ~klasa_tabela_COM()
@@ -1168,7 +1721,7 @@ public:
         SDL_RenderFillRect(ekran, &rect_tabela_COM);
         obraz_USB.wyswietlanie_obrazu();
 
-        if(znalezione_COM == 1)
+        if(znalezione_COM == 1 && wlaczony_COM == 1)
         {
             obraz_correct.wyswietlanie_obrazu();
         }
@@ -1181,7 +1734,22 @@ public:
         SDL_RenderDrawLine(ekran, rect_tabela_COM.x, rect_tabela_COM.y+80, rect_tabela_COM.x+160, rect_tabela_COM.y+80);
         SDL_RenderDrawLine(ekran, rect_tabela_COM.x+80, rect_tabela_COM.y, rect_tabela_COM.x+80, rect_tabela_COM.y+80);
 
-        przycisk_reset_COM.wyswietlanie_przycisku();
+        wybieranie_scrollem.wyswietlanie_wybieranie_scrollem();
+        przycisk_ustaw_COM.wyswietlanie_przycisku();
+
+        SDL_RenderDrawLine(ekran, rect_tabela_COM.x, rect_tabela_COM.y+172, rect_tabela_COM.x+160, rect_tabela_COM.y+172);
+
+        przycisk_wlacz_COM.wyswietlanie_przycisku();
+        przycisk_wylacz_COM.wyswietlanie_przycisku();
+
+        if(wlaczony_COM == 1)
+        {
+            obraz_correct_maly.wyswietlanie_obrazu();
+        }
+        else
+        {
+            obraz_incorrect_maly.wyswietlanie_obrazu();
+        }
     }
 
     bool sprawdzanie_myszka_na_tabela_COM()
@@ -1198,6 +1766,66 @@ public:
         return 0;
     }
 
+    bool sprawdzanie_myszka_na_przyciskach_tabela_COM()
+    {
+        if(przycisk_ustaw_COM.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wlacz_COM.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wylacz_COM.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    bool sprawdzanie_myszka_na_wybieranie_scrollem_tabela_COM()
+    {
+        if(wybieranie_scrollem.sprawdzanie_myszka_na_wybieranie_scrollem())
+        {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    void obsluga_przyciskow()
+    {
+        if(przycisk_ustaw_COM.zwroc_myszka_na_przycisku() == 1)
+        {
+            cout<<"Wybrano inny COM"<<endl;
+            wybrano_inny_COM = 1;
+        }
+
+        if(przycisk_wlacz_COM.zwroc_myszka_na_przycisku() == 1)
+        {
+            cout<<"COM wlaczony"<<endl;
+            wlaczony_COM = 1;
+        }
+
+        if(przycisk_wylacz_COM.zwroc_myszka_na_przycisku() == 1)
+        {
+            cout<<"COM wylaczony"<<endl;
+            wlaczony_COM = 0;
+        }
+    }
+
+    void obsluga_wybieranie_scrollem()
+    {
+        if(wybieranie_scrollem.zwroc_myszka_na_wybieranie_scrollem() == 1)
+        {
+            wybieranie_scrollem.zmiana_wyboru();
+            aktualny_COM = wybieranie_scrollem.zwroc_aktualny_wybor();
+        }
+    }
+
     void przesuwanie_tabela_COM()
     {
         przesuwanie_obiektu(rect_tabela_COM.x, rect_tabela_COM.y, rect_tabela_COM.x, rect_tabela_COM.y, rect_tabela_COM.w, rect_tabela_COM.h, rect_okno.w-5, 5, 5, rect_okno.h-5);
@@ -1206,7 +1834,60 @@ public:
         obraz_correct.zmiana_wspolrzednych(rect_tabela_COM.x+95, rect_tabela_COM.y+15);
         obraz_incorrect.zmiana_wspolrzednych(rect_tabela_COM.x+95, rect_tabela_COM.y+15);
 
-        przycisk_reset_COM.zmiana_polozenia_przycisku(rect_tabela_COM.x+40, rect_tabela_COM.y+95);
+        wybieranie_scrollem.zmiana_polozenia_wybieranie_scrollem(rect_tabela_COM.x+40, rect_tabela_COM.y+95);
+        przycisk_ustaw_COM.zmiana_polozenia_przycisku(rect_tabela_COM.x+40, rect_tabela_COM.y+130);
+
+        przycisk_wlacz_COM.zmiana_polozenia_przycisku(rect_tabela_COM.x+20, rect_tabela_COM.y+185);
+        przycisk_wylacz_COM.zmiana_polozenia_przycisku(rect_tabela_COM.x+20, rect_tabela_COM.y+225);
+
+        obraz_correct_maly.zmiana_wspolrzednych(rect_tabela_COM.x+115, rect_tabela_COM.y+205);
+        obraz_incorrect_maly.zmiana_wspolrzednych(rect_tabela_COM.x+115, rect_tabela_COM.y+205);
+    }
+
+    void zmiana_COM()
+    {
+        CloseHandle(hSerial);
+        LPCSTR nazwy_COM[20];
+        nazwy_COM[0] = "\\\\.\\COM1";
+        nazwy_COM[1] = "\\\\.\\COM2";
+        nazwy_COM[2] = "\\\\.\\COM3";
+        nazwy_COM[3] = "\\\\.\\COM4";
+        nazwy_COM[4] = "\\\\.\\COM5";
+        nazwy_COM[5] = "\\\\.\\COM6";
+        nazwy_COM[6] = "\\\\.\\COM7";
+        nazwy_COM[7] = "\\\\.\\COM8";
+        nazwy_COM[8] = "\\\\.\\COM9";
+        nazwy_COM[9] = "\\\\.\\COM10";
+        nazwy_COM[10] = "\\\\.\\COM11";
+        nazwy_COM[11] = "\\\\.\\COM12";
+        nazwy_COM[12] = "\\\\.\\COM13";
+        nazwy_COM[13] = "\\\\.\\COM14";
+        nazwy_COM[14] = "\\\\.\\COM15";
+        nazwy_COM[15] = "\\\\.\\COM16";
+        nazwy_COM[16] = "\\\\.\\COM17";
+        nazwy_COM[17] = "\\\\.\\COM18";
+        nazwy_COM[18] = "\\\\.\\COM19";
+        nazwy_COM[19] = "\\\\.\\COM20";
+
+        hSerial = CreateFile (nazwy_COM[aktualny_COM], GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+        wybrano_inny_COM = 0;
+        cout<<"Zmiana COM"<<endl;
+    }
+
+    void ustaw_znalezione_COM(bool znalezione_COM_)
+    {
+        znalezione_COM = znalezione_COM_;
+    }
+
+    bool zwroc_wlaczony_COM()
+    {
+        return wlaczony_COM;
+    }
+
+    bool zwroc_wybrano_inny_COM()
+    {
+        return wybrano_inny_COM;
     }
 };
 
@@ -1214,6 +1895,9 @@ class klasa_co_robi_cansat
 {
 private:
     SDL_Rect rect_co_robi_cansat;
+    klasa_obraz obraz_sygnal;
+    klasa_obraz obraz_correct;
+    klasa_obraz obraz_incorrect;
     SDL_Rect rect_kolo_1;
     SDL_Rect rect_kolo_2;
     SDL_Rect rect_kolo_3;
@@ -1229,54 +1913,38 @@ private:
     klasa_tekst tekst5;
     klasa_tekst tekst6;
     klasa_tekst tekst7;
+    bool znaleziony_sygnal;
 
 public:
-    klasa_co_robi_cansat() :obraz_kolo_od_boku1("kolo_od_boku.bmp", 0, 0, 50, 50), obraz_kolo_od_boku2("kolo_od_boku.bmp", 0, 0, 50, 50), obraz_puszka_od_boku("puszka_od_boku.bmp", 0, 0, 70, 70),
-                            tekst1("Wysokosc: 0.23m", 0, 0, 255, 255, 255, 12), tekst2("Szerekosc geo.: 51.2675", 0, 0, 255, 255, 255, 12), tekst3("Dlugosc geo.: 75.7490", 0, 0, 255, 255, 255, 12),
-                            tekst4("Odleglosc prosta: 10.14m", 0, 0, 255, 255, 255, 12), tekst5("Odleglosc calkowita: 10.34m", 0, 0, 255, 255, 255, 12), tekst6("Szybkosc opadania: 0m/s", 0, 0, 255, 255, 255, 12),
-                            tekst7("Tryb: 2", 0, 0, 255, 255, 255, 12)
+    klasa_co_robi_cansat() :obraz_sygnal("sygnal.bmp", 0, 0, 80, 80), obraz_correct("correct.bmp", 0, 0, 50, 50), obraz_incorrect("incorrect.bmp", 0, 0, 50, 50),
+    obraz_kolo_od_boku1("kolo_od_boku.bmp", 0, 0, 50, 50), obraz_kolo_od_boku2("kolo_od_boku.bmp", 0, 0, 50, 50), obraz_puszka_od_boku("puszka_od_boku.bmp", 0, 0, 70, 70),
+    tekst1("Wysokosc: 0.23m", 0, 0, 255, 255, 255, 12), tekst2("Szerekosc geo.: 51.2675", 0, 0, 255, 255, 255, 12), tekst3("Dlugosc geo.: 75.7490", 0, 0, 255, 255, 255, 12),
+    tekst4("Odleglosc prosta: 10.14m", 0, 0, 255, 255, 255, 12), tekst5("Odleglosc calkowita: 10.34m", 0, 0, 255, 255, 255, 12), tekst6("Szybkosc opadania: 0m/s", 0, 0, 255, 255, 255, 12),
+    tekst7("Tryb: 2", 0, 0, 255, 255, 255, 12)
     {
         rect_co_robi_cansat.x = 700;
         rect_co_robi_cansat.y = 20;
         rect_co_robi_cansat.w = 200;
-        rect_co_robi_cansat.h = 420;
+        rect_co_robi_cansat.h = 500;
 
-        rect_kolo_1.x = rect_co_robi_cansat.x + 10;
-        rect_kolo_1.y = rect_co_robi_cansat.y + 55;
         rect_kolo_1.w = 10;
         rect_kolo_1.h = 45;
 
-        rect_kolo_2.x = rect_co_robi_cansat.x + 25;
-        rect_kolo_2.y = rect_co_robi_cansat.y + 55;
         rect_kolo_2.w = 10;
         rect_kolo_2.h = 45;
 
-        rect_kolo_3.x = rect_co_robi_cansat.x + 165;
-        rect_kolo_3.y = rect_co_robi_cansat.y + 55;
         rect_kolo_3.w = 10;
         rect_kolo_3.h = 45;
 
-        rect_kolo_4.x = rect_co_robi_cansat.x + 180;
-        rect_kolo_4.y = rect_co_robi_cansat.y + 55;
         rect_kolo_4.w = 10;
         rect_kolo_4.h = 45;
 
-        rect_puszka.x = rect_co_robi_cansat.x + 40;
-        rect_puszka.y = rect_co_robi_cansat.y + 20;
         rect_puszka.w = 120;
         rect_puszka.h = 60;
 
-        obraz_puszka_od_boku.zmiana_wspolrzednych(rect_co_robi_cansat.x+65, rect_co_robi_cansat.y+110);
-        obraz_kolo_od_boku1.zmiana_wspolrzednych(rect_co_robi_cansat.x+50, rect_co_robi_cansat.y+145);
-        obraz_kolo_od_boku2.zmiana_wspolrzednych(rect_co_robi_cansat.x+100, rect_co_robi_cansat.y+145);
+        znaleziony_sygnal = 0;
 
-        tekst1.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+230);
-        tekst2.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+255);
-        tekst3.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+280);
-        tekst4.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+305);
-        tekst5.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+330);
-        tekst6.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+355);
-        tekst7.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+380);
+        przesuwanie_co_robi_CanSat();
     }
 
     ~klasa_co_robi_cansat()
@@ -1312,6 +1980,16 @@ public:
         SDL_SetRenderDrawColor(ekran, 255, 0, 0, SDL_ALPHA_OPAQUE);
         SDL_RenderFillRect(ekran, &rect_puszka);
 
+        obraz_sygnal.wyswietlanie_obrazu();
+        if(znaleziony_sygnal == 1)
+        {
+            obraz_correct.wyswietlanie_obrazu();
+        }
+        else
+        {
+            obraz_incorrect.wyswietlanie_obrazu();
+        }
+
         obraz_puszka_od_boku.wyswietlanie_obrazu();
         obraz_kolo_od_boku1.wyswietlanie_obrazu_z_obrotem(10);
         obraz_kolo_od_boku2.wyswietlanie_obrazu_z_obrotem(10);
@@ -1329,96 +2007,1226 @@ public:
     {
         przesuwanie_obiektu(rect_co_robi_cansat.x, rect_co_robi_cansat.y, rect_co_robi_cansat.x, rect_co_robi_cansat.y, rect_co_robi_cansat.w, rect_co_robi_cansat.h, rect_okno.w-5, 5, 5, rect_okno.h-5);
 
+        obraz_sygnal.zmiana_wspolrzednych(rect_co_robi_cansat.x + 15, rect_co_robi_cansat.y + 10);
+        obraz_correct.zmiana_wspolrzednych(rect_co_robi_cansat.x + 120, rect_co_robi_cansat.y + 25);
+        obraz_incorrect.zmiana_wspolrzednych(rect_co_robi_cansat.x + 120, rect_co_robi_cansat.y + 25);
+
         rect_kolo_1.x = rect_co_robi_cansat.x + 10;
-        rect_kolo_1.y = rect_co_robi_cansat.y + 55;
+        rect_kolo_1.y = rect_co_robi_cansat.y + 145;
 
         rect_kolo_2.x = rect_co_robi_cansat.x + 25;
-        rect_kolo_2.y = rect_co_robi_cansat.y + 55;
+        rect_kolo_2.y = rect_co_robi_cansat.y + 145;
 
         rect_kolo_3.x = rect_co_robi_cansat.x + 165;
-        rect_kolo_3.y = rect_co_robi_cansat.y + 55;
+        rect_kolo_3.y = rect_co_robi_cansat.y + 145;
 
         rect_kolo_4.x = rect_co_robi_cansat.x + 180;
-        rect_kolo_4.y = rect_co_robi_cansat.y + 55;
+        rect_kolo_4.y = rect_co_robi_cansat.y + 145;
 
         rect_puszka.x = rect_co_robi_cansat.x + 40;
-        rect_puszka.y = rect_co_robi_cansat.y + 20;
+        rect_puszka.y = rect_co_robi_cansat.y + 110;
 
-        obraz_puszka_od_boku.zmiana_wspolrzednych(rect_co_robi_cansat.x+65, rect_co_robi_cansat.y+110);
-        obraz_kolo_od_boku1.zmiana_wspolrzednych(rect_co_robi_cansat.x+50, rect_co_robi_cansat.y+145);
-        obraz_kolo_od_boku2.zmiana_wspolrzednych(rect_co_robi_cansat.x+100, rect_co_robi_cansat.y+145);
+        obraz_puszka_od_boku.zmiana_wspolrzednych(rect_co_robi_cansat.x+65, rect_co_robi_cansat.y+200);
+        obraz_kolo_od_boku1.zmiana_wspolrzednych(rect_co_robi_cansat.x+50, rect_co_robi_cansat.y+235);
+        obraz_kolo_od_boku2.zmiana_wspolrzednych(rect_co_robi_cansat.x+100, rect_co_robi_cansat.y+235);
 
-        tekst1.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+230);
-        tekst2.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+255);
-        tekst3.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+280);
-        tekst4.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+305);
-        tekst5.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+330);
-        tekst6.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+355);
-        tekst7.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+380);
+        tekst1.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+310);
+        tekst2.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+335);
+        tekst3.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+360);
+        tekst4.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+385);
+        tekst5.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+410);
+        tekst6.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+435);
+        tekst7.zmiana_polozenia_tekstu(rect_co_robi_cansat.x+10, rect_co_robi_cansat.y+460);
+    }
+
+    void ustaw_znaleziony_sygnal(bool znaleziony_sygnal_)
+    {
+        znaleziony_sygnal = znaleziony_sygnal_;
     }
 };
 
-//ZMIENNE GLOBALNE (WYKRESY)
-klasa_wykres_int tablica_wykresow_int[8];
-klasa_wykres_double tablica_wykresow_double[28];
-
-const int liczba_wykresow = 36;
-
-/*
-TABLICA_WYKRESOW_INT:
-0 - wykres_godzina
-1 - wykres_minuta
-2 - wykres_sekunda
-3 - wykres_spis_dzialajacych
-4 - wykres_opis_dzialania
-5 - wykres_RSSI_cansat
-6 - wykres_spis_dzialajacych_stacja
-7 - wykres_RSSI_stacja
-
-TABLICA_WYKRESOW_DOUBLE:
-8 - wykres_lokalizacja0
-9 - wykres_lokalizacja1
-10 - wykres_wysokosc
-11 - wykres_temperatura_DS18B20
-12 - wykres_temperatura_SHT
-13 - wykres_wilgotnosc
-14 - wykres_akcelerometr0
-15 - wykres_akcelerometr1
-16 - wykres_akcelerometr2
-17 - wykres_zyroskop0
-18 - wykres_zyroskop1
-19 - wykres_zyroskop2
-20 - wykres_magnetometr0
-21 - wykres_magnetometr1
-22 - wykres_magnetometr2
-23 - wykres_temperatura_altimu
-24 - wykres_cisnienie_altimu
-25 - wykres_wilgotnosc_ziemi
-26 - wykres_napiecie_baterii
-27 - wykres_lokalizacja_stacja0
-28 - wykres_lokalizacja_stacja1
-29 - wykres_temperatura_altimu_stacja
-30 - wykres_cisnienie_altimu_stacja
-31 - wykres_roznica_wysokosci
-32 - wykres_odleglosc_prosta
-33 - wykres_odleglosc_calkowita
-34 - wykres_kat_wysokosc
-35 - wykres_kat_obrot*/
-//ZMIENNE GLOBALNE (WYKRESY) - KONIEC
-
-int potega(int liczba, int potega)
+class klasa_dane_do_portu
 {
-    if (potega == 0)
+private:
+    SDL_Rect rect_dane_do_portu;
+    klasa_tekst tekst_szerokosc_geo;
+    klasa_wpisywanie_klawiatura wpisywanie_klawiatura_szerokosc_geo;
+    klasa_tekst tekst_dlugosc_geo;
+    klasa_wpisywanie_klawiatura wpisywanie_klawiatura_dlugosc_geo;
+    klasa_tekst tekst_cisnienie_stacji;
+    klasa_wpisywanie_klawiatura wpisywanie_klawiatura_cisnienie_stacji;
+    klasa_tekst tekst_temperatura_stacji;
+    klasa_wpisywanie_klawiatura wpisywanie_klawiatura_temperatura_stacji;
+    klasa_przycisk przycisk_ustaw_lokalizacje_cisnienie;
+    klasa_przycisk przycisk_wyslij_cisnienie_stacji;
+    klasa_tekst tekst_odsylanie_poczatek;
+    klasa_wpisywanie_klawiatura wpisywanie_klawiatura_odsylanie_poczatek;
+    klasa_tekst tekst_odsylanie_koniec;
+    klasa_wpisywanie_klawiatura wpisywanie_klawiatura_odsylanie_koniec;
+    klasa_przycisk przycisk_wyslij_odsylanie;
+    klasa_tekst tekst_kat_obrot;
+    klasa_wpisywanie_klawiatura wpisywanie_klawiatura_kat_obrot;
+    klasa_tekst tekst_kat_wysokosc;
+    klasa_wpisywanie_klawiatura wpisywanie_klawiatura_kat_wysokosc;
+    klasa_przycisk przycisk_wyslij_katy;
+    klasa_tekst tekst_wysylanie_wolne;
+    klasa_wybieranie_scrollem wybieranie_scrollem_wysylanie_wolne;
+    klasa_przycisk przycisk_wysylanie_wolne;
+    klasa_tekst tekst_manualny;
+    klasa_wybieranie_scrollem wybieranie_scrollem_manualny;
+    klasa_przycisk przycisk_wyslij_manualny;
+    klasa_tekst tekst_wymagany_manualny;
+    klasa_tekst tekst_tryb;
+    klasa_wybieranie_scrollem wybieranie_scrollem_tryb;
+    klasa_przycisk przycisk_wyslij_tryb;
+    klasa_tekst tekst_ruch;
+    klasa_wybieranie_scrollem wybieranie_scrollem_ruch;
+    klasa_przycisk przycisk_wyslij_ruch;
+    klasa_tekst tekst_podwozie;
+    klasa_wybieranie_scrollem wybieranie_scrollem_podwozie;
+    klasa_przycisk przycisk_wyslij_podwozie;
+    klasa_tekst tekst_czujnik;
+    klasa_wybieranie_scrollem wybieranie_scrollem_czujnik;
+    klasa_przycisk przycisk_wyslij_czujnik;
+    klasa_obraz obraz_correct_maly;
+    klasa_obraz obraz_incorrect_maly;
+
+    char wiadomosc_do_wyslania[12];
+
+    char wiadomosc_manualny_wlaczenie[10];
+    char wiadomosc_manualny_wylaczenie[10];
+
+    char wiadomosc_tryb_lot[10];
+    char wiadomosc_tryb_po_wyladowaniu[10];
+    char wiadomosc_tryb_uspienie[10];
+
+    char wiadomosc_ruch_przod[10];
+    char wiadomosc_ruch_tyl[10];
+    char wiadomosc_ruch_lewo[10];
+    char wiadomosc_ruch_prawo[10];
+    char wiadomosc_ruch_zatrzymaj[10];
+
+    char wiadomosc_podwozie_wysuwanie[10];
+    char wiadomosc_podwozie_wsuwanie[10];
+    char wiadomosc_podwozie_zatrzymaj[10];
+
+    char wiadomosc_czujnik_wysuwanie[10];
+    char wiadomosc_czujnik_wsuwanie[10];
+    char wiadomosc_czujnik_zatrzymaj[10];
+
+    int max_m_x;
+    int max_m_y;
+    int max_m_z;
+    int min_m_x;
+    int min_m_y;
+    int min_m_z;
+    int aktualny_kat_obrot = 0;
+    int aktualny_kat_wysokosc = 0;
+
+public:
+    klasa_dane_do_portu():tekst_szerokosc_geo("Szerokosc geograficzna", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_szerokosc_geo(0, 0, 120, 20), tekst_dlugosc_geo("Dlugosc geograficzna", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_dlugosc_geo(0, 0, 120, 20),
+    tekst_cisnienie_stacji("Cisnienie na ziemi", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_cisnienie_stacji(0, 0, 120, 20),
+    tekst_temperatura_stacji("Temperatura", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_temperatura_stacji(0, 0, 120, 20), przycisk_ustaw_lokalizacje_cisnienie(0, 0, 100, 30, "Ustaw"),
+    przycisk_wyslij_cisnienie_stacji(0, 0, 100, 30, "Wyslij cisnienie"), tekst_odsylanie_poczatek("Odsylanie poczatek", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_odsylanie_poczatek(0, 0, 120, 20),
+    tekst_odsylanie_koniec("Odsylanie koniec", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_odsylanie_koniec(0, 0, 120, 20), przycisk_wyslij_odsylanie(0, 0, 100, 30, "Wyslij odsylanie"),
+    tekst_kat_obrot("Kat obrot", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_kat_obrot(0, 0, 120, 20), tekst_kat_wysokosc("Kat wysokosc", 0, 0, 255, 255, 255, 12),
+    wpisywanie_klawiatura_kat_wysokosc(0, 0, 120, 20), przycisk_wyslij_katy(0, 0, 100, 30, "Wyslij katy"),
+    tekst_wysylanie_wolne("Rodzaj wysylania", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_wysylanie_wolne(0, 0, 120, 25, 2), przycisk_wysylanie_wolne(0, 0, 100, 30, "Ustaw wysylanie"), tekst_wymagany_manualny("Wymagany manualny", 0, 0, 255, 255, 255, 12),
+    tekst_manualny("Tryb manualny", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_manualny(0, 0, 120, 25, 2), przycisk_wyslij_manualny(0, 0, 100, 30, "Wyslij manualny"),
+    tekst_tryb("Tryb", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_tryb(0, 0, 120, 25, 3), przycisk_wyslij_tryb(0, 0, 100, 30, "Wyslij tryb"),
+    tekst_ruch("Ruch", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_ruch(0, 0, 120, 25, 5), przycisk_wyslij_ruch(0, 0, 100, 30, "Wyslij ruch"),
+    tekst_podwozie("Podwozie", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_podwozie(0, 0, 120, 25, 3), przycisk_wyslij_podwozie(0, 0, 100, 30, "Wyslij podwozie"),
+    tekst_czujnik("Czujnik wilgotnosci", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_czujnik(0, 0, 120, 25, 3), przycisk_wyslij_czujnik(0, 0, 100, 30, "Wyslij czujnik"),
+    obraz_correct_maly("correct_maly.bmp", 0, 0, 30, 30), obraz_incorrect_maly("incorrect_maly.bmp", 0, 0, 30, 30)
     {
-        return 1;
+        rect_dane_do_portu.x = 450;
+        rect_dane_do_portu.y = 30;
+        rect_dane_do_portu.w = 320;
+        rect_dane_do_portu.h = 600;
+
+        ustawianie_polozenia_obiektow();
+
+        wybieranie_scrollem_wysylanie_wolne.dopisz_wybor("Szybkie", 0, 0, 0, 12, 0);
+        wybieranie_scrollem_wysylanie_wolne.dopisz_wybor("Wolne", 0, 0, 0, 12, 1);
+
+        wybieranie_scrollem_manualny.dopisz_wybor("Wlacz", 0, 0, 0, 12, 0);
+        wybieranie_scrollem_manualny.dopisz_wybor("Wylacz", 0, 0, 0, 12, 1);
+
+        wybieranie_scrollem_tryb.dopisz_wybor("Lot", 0, 0, 0, 12, 0);
+        wybieranie_scrollem_tryb.dopisz_wybor("Lazik", 0, 0, 0, 12, 1);
+        wybieranie_scrollem_tryb.dopisz_wybor("Uspienie", 0, 0, 0, 12, 2);
+
+        wybieranie_scrollem_ruch.dopisz_wybor("Przod", 0, 0, 0, 12, 0);
+        wybieranie_scrollem_ruch.dopisz_wybor("Tyl", 0, 0, 0, 12, 1);
+        wybieranie_scrollem_ruch.dopisz_wybor("Lewo", 0, 0, 0, 12, 2);
+        wybieranie_scrollem_ruch.dopisz_wybor("Prawo", 0, 0, 0, 12, 3);
+        wybieranie_scrollem_ruch.dopisz_wybor("Zatrzymaj", 0, 0, 0, 12, 4);
+
+        wybieranie_scrollem_podwozie.dopisz_wybor("Wysuwanie", 0, 0, 0, 12, 0);
+        wybieranie_scrollem_podwozie.dopisz_wybor("Wsuwanie", 0, 0, 0, 12, 1);
+        wybieranie_scrollem_podwozie.dopisz_wybor("Zatrzymaj", 0, 0, 0, 12, 2);
+
+        wybieranie_scrollem_czujnik.dopisz_wybor("Wysuwanie", 0, 0, 0, 12, 0);
+        wybieranie_scrollem_czujnik.dopisz_wybor("Wsuwanie", 0, 0, 0, 12, 1);
+        wybieranie_scrollem_czujnik.dopisz_wybor("Zatrzymaj", 0, 0, 0, 12, 2);
+
+        for(int i=0; i<11; i++)
+        {
+            wiadomosc_do_wyslania[i] = 20;
+        }
+        wiadomosc_do_wyslania[11] = '\0';
+
+        wiadomosc_manualny_wlaczenie[0] = 35;
+        wiadomosc_manualny_wlaczenie[1] = 35;
+        wiadomosc_manualny_wylaczenie[0] = 35;
+        wiadomosc_manualny_wylaczenie[1] = 35;
+        wiadomosc_tryb_lot[0] = 40;
+        wiadomosc_tryb_lot[1] = 40;
+        wiadomosc_tryb_po_wyladowaniu[0] = 40;
+        wiadomosc_tryb_po_wyladowaniu[1] = 40;
+        wiadomosc_tryb_uspienie[0] = 40;
+        wiadomosc_tryb_uspienie[1] = 40;
+        wiadomosc_ruch_przod[0] = 45;
+        wiadomosc_ruch_przod[1] = 45;
+        wiadomosc_ruch_tyl[0] = 45;
+        wiadomosc_ruch_tyl[1] = 45;
+        wiadomosc_ruch_lewo[0] = 45;
+        wiadomosc_ruch_lewo[1] = 45;
+        wiadomosc_ruch_prawo[0] = 45;
+        wiadomosc_ruch_prawo[1] = 45;
+        wiadomosc_ruch_zatrzymaj[0] = 45;
+        wiadomosc_ruch_zatrzymaj[1] = 45;
+        wiadomosc_podwozie_wysuwanie[0] = 50;
+        wiadomosc_podwozie_wysuwanie[1] = 50;
+        wiadomosc_podwozie_wsuwanie[0] = 50;
+        wiadomosc_podwozie_wsuwanie[1] = 50;
+        wiadomosc_podwozie_zatrzymaj[0] = 50;
+        wiadomosc_podwozie_zatrzymaj[1] = 50;
+        wiadomosc_czujnik_wysuwanie[0] = 55;
+        wiadomosc_czujnik_wysuwanie[1] = 55;
+        wiadomosc_czujnik_wsuwanie[0] = 55;
+        wiadomosc_czujnik_wsuwanie[1] = 55;
+        wiadomosc_czujnik_zatrzymaj[0] = 55;
+        wiadomosc_czujnik_zatrzymaj[1] = 55;
+        for(int i=2; i<9; i++)
+        {
+            wiadomosc_manualny_wlaczenie[i] = 21;
+            wiadomosc_manualny_wylaczenie[i] = 20;
+            wiadomosc_tryb_lot[i] = 21;
+            wiadomosc_tryb_po_wyladowaniu[i] = 22;
+            wiadomosc_tryb_uspienie[i] = 23;
+            wiadomosc_ruch_przod[i] = 20;
+            wiadomosc_ruch_tyl[i] = 21;
+            wiadomosc_ruch_lewo[i] = 22;
+            wiadomosc_ruch_prawo[i] = 23;
+            wiadomosc_ruch_zatrzymaj[i] = 24;
+            wiadomosc_podwozie_wysuwanie[i] = 20;
+            wiadomosc_podwozie_wsuwanie[i] = 21;
+            wiadomosc_podwozie_zatrzymaj[i] = 22;
+            wiadomosc_czujnik_wysuwanie[i] = 20;
+            wiadomosc_czujnik_wsuwanie[i] = 21;
+            wiadomosc_czujnik_zatrzymaj[i] = 22;
+        }
+        wiadomosc_manualny_wlaczenie[9] = '\0';
+        wiadomosc_manualny_wylaczenie[9] = '\0';
+        wiadomosc_tryb_lot[9] = '\0';
+        wiadomosc_tryb_po_wyladowaniu[9] = '\0';
+        wiadomosc_tryb_uspienie[9] = '\0';
+        wiadomosc_ruch_przod[9] = '\0';
+        wiadomosc_ruch_tyl[9] = '\0';
+        wiadomosc_ruch_lewo[9] = '\0';
+        wiadomosc_ruch_prawo[9] = '\0';
+        wiadomosc_ruch_zatrzymaj[9] = '\0';
+        wiadomosc_podwozie_wysuwanie[9] = '\0';
+        wiadomosc_podwozie_wsuwanie[9] = '\0';
+        wiadomosc_podwozie_zatrzymaj[9] = '\0';
+        wiadomosc_czujnik_wysuwanie[9] = '\0';
+        wiadomosc_czujnik_wsuwanie[9] = '\0';
+        wiadomosc_czujnik_zatrzymaj[9] = '\0';
+
+        max_m_x = 3900;
+        max_m_y = 1300;
+        max_m_z = 7100;
+        min_m_x = -4700;
+        min_m_y = -5900;
+        min_m_z = -450;
+
+        aktualny_kat_obrot = 0;
+        aktualny_kat_wysokosc = 0;
+
     }
-    int liczba_poczatkowa = liczba;
-    for (int i = 1; i < potega; i++)
+
+    ~klasa_dane_do_portu()
     {
-        liczba_poczatkowa *= liczba;
+        ;
     }
-    return liczba_poczatkowa;
+
+    void wyswietlanie_dane_do_portu()
+    {
+        SDL_SetRenderDrawColor(ekran, 255, 255, 255, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawRect(ekran, &rect_dane_do_portu);
+        SDL_RenderDrawLine(ekran, rect_dane_do_portu.x + 160, rect_dane_do_portu.y, rect_dane_do_portu.x + 160, rect_dane_do_portu.y + 600);
+        SDL_RenderDrawLine(ekran, rect_dane_do_portu.x + 160, rect_dane_do_portu.y + 105, rect_dane_do_portu.x + 320, rect_dane_do_portu.y + 105);
+
+        tekst_szerokosc_geo.wyswietlanie_tekstu();
+        wpisywanie_klawiatura_szerokosc_geo.wyswietlanie_wpisywanie_klawiatura();
+
+        tekst_dlugosc_geo.wyswietlanie_tekstu();
+        wpisywanie_klawiatura_dlugosc_geo.wyswietlanie_wpisywanie_klawiatura();
+
+        tekst_cisnienie_stacji.wyswietlanie_tekstu();
+        wpisywanie_klawiatura_cisnienie_stacji.wyswietlanie_wpisywanie_klawiatura();
+
+        tekst_temperatura_stacji.wyswietlanie_tekstu();
+        wpisywanie_klawiatura_temperatura_stacji.wyswietlanie_wpisywanie_klawiatura();
+
+        przycisk_ustaw_lokalizacje_cisnienie.wyswietlanie_przycisku();
+        przycisk_wyslij_cisnienie_stacji.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 125, rect_dane_do_portu.y + 220);
+
+        tekst_odsylanie_poczatek.wyswietlanie_tekstu();
+        wpisywanie_klawiatura_odsylanie_poczatek.wyswietlanie_wpisywanie_klawiatura();
+
+        tekst_odsylanie_koniec.wyswietlanie_tekstu();
+        wpisywanie_klawiatura_odsylanie_koniec.wyswietlanie_wpisywanie_klawiatura();
+
+        przycisk_wyslij_odsylanie.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 125, rect_dane_do_portu.y + 345);
+
+        tekst_kat_obrot.wyswietlanie_tekstu();
+        wpisywanie_klawiatura_kat_obrot.wyswietlanie_wpisywanie_klawiatura();
+
+        tekst_kat_wysokosc.wyswietlanie_tekstu();
+        wpisywanie_klawiatura_kat_wysokosc.wyswietlanie_wpisywanie_klawiatura();
+
+        przycisk_wyslij_katy.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 125, rect_dane_do_portu.y + 470);
+
+        tekst_wysylanie_wolne.wyswietlanie_tekstu();
+        wybieranie_scrollem_wysylanie_wolne.wyswietlanie_wybieranie_scrollem();
+
+        przycisk_wysylanie_wolne.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 125, rect_dane_do_portu.y + 560);
+
+        tekst_manualny.wyswietlanie_tekstu();
+        wybieranie_scrollem_manualny.wyswietlanie_wybieranie_scrollem();
+        przycisk_wyslij_manualny.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 285, rect_dane_do_portu.y + 65);
+
+        tekst_wymagany_manualny.wyswietlanie_tekstu();
+
+        tekst_tryb.wyswietlanie_tekstu();
+        wybieranie_scrollem_tryb.wyswietlanie_wybieranie_scrollem();
+        przycisk_wyslij_tryb.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 285, rect_dane_do_portu.y + 185);
+
+        tekst_ruch.wyswietlanie_tekstu();
+        wybieranie_scrollem_ruch.wyswietlanie_wybieranie_scrollem();
+        przycisk_wyslij_ruch.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 285, rect_dane_do_portu.y + 280);
+
+        tekst_podwozie.wyswietlanie_tekstu();
+        wybieranie_scrollem_podwozie.wyswietlanie_wybieranie_scrollem();
+        przycisk_wyslij_podwozie.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 285, rect_dane_do_portu.y + 375);
+
+        tekst_czujnik.wyswietlanie_tekstu();
+        wybieranie_scrollem_czujnik.wyswietlanie_wybieranie_scrollem();
+        przycisk_wyslij_czujnik.wyswietlanie_przycisku();
+        obraz_correct_maly.wyswietlanie_obrazu_inne_wspolrzedne(rect_dane_do_portu.x + 285, rect_dane_do_portu.y + 470);
+    }
+
+    bool sprawdzanie_myszka_na_dane_do_portu()
+    {
+        if(sprawdzanie_czy_najechala_myszka(rect_dane_do_portu.x, rect_dane_do_portu.y, rect_dane_do_portu.w, rect_dane_do_portu.h))
+        {
+            if(aktualny_wyglad_kursora != 7)
+            {
+                SDL_SetCursor(kursor_przesuwanie);
+                aktualny_wyglad_kursora = 7;
+            }
+            return 1;
+        }
+        return 0;
+    }
+
+    bool sprawdzanie_myszka_na_przyciskach_dane_do_portu()
+    {
+        if(przycisk_ustaw_lokalizacje_cisnienie.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wyslij_cisnienie_stacji.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wyslij_odsylanie.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wyslij_katy.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wysylanie_wolne.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wyslij_manualny.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wyslij_tryb.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wyslij_ruch.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wyslij_podwozie.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        if(przycisk_wyslij_czujnik.sprawdzanie_myszka_na_przycisku())
+        {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    bool sprawdzanie_myszka_na_wybieranie_scrollem_dane_do_portu()
+    {
+        if(wybieranie_scrollem_wysylanie_wolne.sprawdzanie_myszka_na_wybieranie_scrollem())
+        {
+            return 1;
+        }
+
+        if(wybieranie_scrollem_manualny.sprawdzanie_myszka_na_wybieranie_scrollem())
+        {
+            return 1;
+        }
+
+        if(wybieranie_scrollem_tryb.sprawdzanie_myszka_na_wybieranie_scrollem())
+        {
+            return 1;
+        }
+
+        if(wybieranie_scrollem_ruch.sprawdzanie_myszka_na_wybieranie_scrollem())
+        {
+            return 1;
+        }
+
+        if(wybieranie_scrollem_podwozie.sprawdzanie_myszka_na_wybieranie_scrollem())
+        {
+            return 1;
+        }
+
+        if(wybieranie_scrollem_czujnik.sprawdzanie_myszka_na_wybieranie_scrollem())
+        {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    bool sprawdzanie_myszka_na_wpisywanie_klawiatura_dane_do_portu()
+    {
+        if(wpisywanie_klawiatura_szerokosc_geo.sprawdzanie_myszka_na_wpisywanie_klawiatura())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_dlugosc_geo.sprawdzanie_myszka_na_wpisywanie_klawiatura())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_cisnienie_stacji.sprawdzanie_myszka_na_wpisywanie_klawiatura())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_temperatura_stacji.sprawdzanie_myszka_na_wpisywanie_klawiatura())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_odsylanie_poczatek.sprawdzanie_myszka_na_wpisywanie_klawiatura())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_odsylanie_koniec.sprawdzanie_myszka_na_wpisywanie_klawiatura())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_kat_obrot.sprawdzanie_myszka_na_wpisywanie_klawiatura())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_kat_wysokosc.sprawdzanie_myszka_na_wpisywanie_klawiatura())
+        {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    void obsluga_przyciskow()
+    {
+        if(przycisk_ustaw_lokalizacje_cisnienie.zwroc_myszka_na_przycisku())
+        {
+            wpisywanie_klawiatura_szerokosc_geo.obliczenie_liczby();
+            wpisywanie_klawiatura_dlugosc_geo.obliczenie_liczby();
+            wpisywanie_klawiatura_cisnienie_stacji.obliczenie_liczby();
+            wpisywanie_klawiatura_temperatura_stacji.obliczenie_liczby();
+        }
+
+        if(przycisk_wyslij_cisnienie_stacji.zwroc_myszka_na_przycisku())
+        {
+            wpisywanie_klawiatura_cisnienie_stacji.obliczenie_liczby();
+        }
+
+        if(przycisk_wyslij_odsylanie.zwroc_myszka_na_przycisku())
+        {
+            wpisywanie_klawiatura_odsylanie_poczatek.obliczenie_liczby();
+            wpisywanie_klawiatura_odsylanie_koniec.obliczenie_liczby();
+        }
+
+        if(przycisk_wyslij_katy.zwroc_myszka_na_przycisku())
+        {
+            wpisywanie_klawiatura_kat_obrot.obliczenie_liczby();
+            wpisywanie_klawiatura_kat_wysokosc.obliczenie_liczby();
+        }
+
+        if(przycisk_wysylanie_wolne.zwroc_myszka_na_przycisku())
+        {
+            ;
+        }
+
+        if(przycisk_wyslij_manualny.zwroc_myszka_na_przycisku())
+        {
+            if(wybieranie_scrollem_manualny.zwroc_aktualny_wybor() == 0)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_manualny_wlaczenie[i];
+                }
+            }
+            else if(wybieranie_scrollem_manualny.zwroc_aktualny_wybor() == 1)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_manualny_wylaczenie[i];
+                }
+            }
+            cout<<"wiadomosc_do_wyslania: "<<wiadomosc_do_wyslania<<endl;
+        }
+
+        if(przycisk_wyslij_tryb.zwroc_myszka_na_przycisku())
+        {
+            if(wybieranie_scrollem_tryb.zwroc_aktualny_wybor() == 0)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_tryb_lot[i];
+                }
+            }
+            else if(wybieranie_scrollem_tryb.zwroc_aktualny_wybor() == 1)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_tryb_po_wyladowaniu[i];
+                }
+            }
+            else if(wybieranie_scrollem_tryb.zwroc_aktualny_wybor() == 2)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_tryb_uspienie[i];
+                }
+            }
+            cout<<"wiadomosc_do_wyslania: "<<wiadomosc_do_wyslania<<endl;
+        }
+
+        if(przycisk_wyslij_ruch.zwroc_myszka_na_przycisku())
+        {
+            if(wybieranie_scrollem_ruch.zwroc_aktualny_wybor() == 0)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_ruch_przod[i];
+                }
+            }
+            else if(wybieranie_scrollem_ruch.zwroc_aktualny_wybor() == 1)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_ruch_tyl[i];
+                }
+            }
+            else if(wybieranie_scrollem_ruch.zwroc_aktualny_wybor() == 2)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_ruch_lewo[i];
+                }
+            }
+            else if(wybieranie_scrollem_ruch.zwroc_aktualny_wybor() == 3)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_ruch_prawo[i];
+                }
+            }
+            else if(wybieranie_scrollem_ruch.zwroc_aktualny_wybor() == 4)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_ruch_tyl[i];
+                }
+            }
+            cout<<"wiadomosc_do_wyslania: "<<wiadomosc_do_wyslania<<endl;
+        }
+
+        if(przycisk_wyslij_podwozie.zwroc_myszka_na_przycisku())
+        {
+            if(wybieranie_scrollem_podwozie.zwroc_aktualny_wybor() == 0)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_podwozie_wysuwanie[i];
+                }
+            }
+            else if(wybieranie_scrollem_podwozie.zwroc_aktualny_wybor() == 1)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_podwozie_wsuwanie[i];
+                }
+            }
+            else if(wybieranie_scrollem_podwozie.zwroc_aktualny_wybor() == 2)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_podwozie_zatrzymaj[i];
+                }
+            }
+            cout<<"wiadomosc_do_wyslania: "<<wiadomosc_do_wyslania<<endl;
+        }
+
+        if(przycisk_wyslij_czujnik.zwroc_myszka_na_przycisku())
+        {
+            if(wybieranie_scrollem_czujnik.zwroc_aktualny_wybor() == 0)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_czujnik_wysuwanie[i];
+                }
+            }
+            else if(wybieranie_scrollem_czujnik.zwroc_aktualny_wybor() == 1)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_czujnik_wsuwanie[i];
+                }
+            }
+            else if(wybieranie_scrollem_czujnik.zwroc_aktualny_wybor() == 2)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_czujnik_zatrzymaj[i];
+                }
+            }
+            cout<<"wiadomosc_do_wyslania: "<<wiadomosc_do_wyslania<<endl;
+        }
+    }
+
+    void obsluga_wybieranie_scrollem()
+    {
+        if(wybieranie_scrollem_wysylanie_wolne.zwroc_myszka_na_wybieranie_scrollem() == 1)
+        {
+            wybieranie_scrollem_wysylanie_wolne.zmiana_wyboru();
+        }
+
+        if(wybieranie_scrollem_manualny.zwroc_myszka_na_wybieranie_scrollem() == 1)
+        {
+            wybieranie_scrollem_manualny.zmiana_wyboru();
+        }
+
+        if(wybieranie_scrollem_tryb.zwroc_myszka_na_wybieranie_scrollem() == 1)
+        {
+            wybieranie_scrollem_tryb.zmiana_wyboru();
+        }
+
+        if(wybieranie_scrollem_ruch.zwroc_myszka_na_wybieranie_scrollem() == 1)
+        {
+            wybieranie_scrollem_ruch.zmiana_wyboru();
+        }
+
+        if(wybieranie_scrollem_podwozie.zwroc_myszka_na_wybieranie_scrollem() == 1)
+        {
+            wybieranie_scrollem_podwozie.zmiana_wyboru();
+        }
+
+        if(wybieranie_scrollem_czujnik.zwroc_myszka_na_wybieranie_scrollem() == 1)
+        {
+            wybieranie_scrollem_czujnik.zmiana_wyboru();
+        }
+    }
+
+    void obsluga_wpisywanie_klawiatura()
+    {
+        wpisywanie_klawiatura_szerokosc_geo.sprawdz_klikniecie();
+        wpisywanie_klawiatura_dlugosc_geo.sprawdz_klikniecie();
+        wpisywanie_klawiatura_cisnienie_stacji.sprawdz_klikniecie();
+        wpisywanie_klawiatura_temperatura_stacji.sprawdz_klikniecie();
+        wpisywanie_klawiatura_odsylanie_poczatek.sprawdz_klikniecie();
+        wpisywanie_klawiatura_odsylanie_koniec.sprawdz_klikniecie();
+        wpisywanie_klawiatura_kat_obrot.sprawdz_klikniecie();
+        wpisywanie_klawiatura_kat_wysokosc.sprawdz_klikniecie();
+    }
+
+    void dopisywanie_znakow_do_wpisywanie_klawiatura(char znak)
+    {
+        wpisywanie_klawiatura_szerokosc_geo.dopisywanie_znaku(znak);
+        wpisywanie_klawiatura_dlugosc_geo.dopisywanie_znaku(znak);
+        wpisywanie_klawiatura_cisnienie_stacji.dopisywanie_znaku(znak);
+        wpisywanie_klawiatura_temperatura_stacji.dopisywanie_znaku(znak);
+        wpisywanie_klawiatura_odsylanie_poczatek.dopisywanie_znaku(znak);
+        wpisywanie_klawiatura_odsylanie_koniec.dopisywanie_znaku(znak);
+        wpisywanie_klawiatura_kat_obrot.dopisywanie_znaku(znak);
+        wpisywanie_klawiatura_kat_wysokosc.dopisywanie_znaku(znak);
+    }
+
+    void usuwanie_ostatniego_znaku_wpisywanie_klawiatura()
+    {
+        wpisywanie_klawiatura_szerokosc_geo.usuwanie_ostatniego_znaku();
+        wpisywanie_klawiatura_dlugosc_geo.usuwanie_ostatniego_znaku();
+        wpisywanie_klawiatura_cisnienie_stacji.usuwanie_ostatniego_znaku();
+        wpisywanie_klawiatura_temperatura_stacji.usuwanie_ostatniego_znaku();
+        wpisywanie_klawiatura_odsylanie_poczatek.usuwanie_ostatniego_znaku();
+        wpisywanie_klawiatura_odsylanie_koniec.usuwanie_ostatniego_znaku();
+        wpisywanie_klawiatura_kat_obrot.usuwanie_ostatniego_znaku();
+        wpisywanie_klawiatura_kat_wysokosc.usuwanie_ostatniego_znaku();
+    }
+
+    bool zwroc_aktywne_wpisywanie_klawiatura()
+    {
+        if(wpisywanie_klawiatura_szerokosc_geo.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_dlugosc_geo.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_dlugosc_geo.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_cisnienie_stacji.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_temperatura_stacji.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_odsylanie_poczatek.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_odsylanie_koniec.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_kat_obrot.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        if(wpisywanie_klawiatura_kat_wysokosc.zwroc_aktywne_wpisywanie())
+        {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    void przesuwanie_dane_do_portu()
+    {
+        przesuwanie_obiektu(rect_dane_do_portu.x, rect_dane_do_portu.y, rect_dane_do_portu.x, rect_dane_do_portu.y, rect_dane_do_portu.w, rect_dane_do_portu.h, rect_okno.w-5, 5, 5, rect_okno.h);
+        ustawianie_polozenia_obiektow();
+    }
+
+    void ustawianie_polozenia_obiektow()
+    {
+        tekst_szerokosc_geo.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 15);
+        wpisywanie_klawiatura_szerokosc_geo.zmiana_polozenia_wpisywanie_klawiatura(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 30);
+
+        tekst_dlugosc_geo.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 55);
+        wpisywanie_klawiatura_dlugosc_geo.zmiana_polozenia_wpisywanie_klawiatura(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 70);
+
+        tekst_cisnienie_stacji.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 95);
+        wpisywanie_klawiatura_cisnienie_stacji.zmiana_polozenia_wpisywanie_klawiatura(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 110);
+
+        tekst_temperatura_stacji.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 135);
+        wpisywanie_klawiatura_temperatura_stacji.zmiana_polozenia_wpisywanie_klawiatura(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 150);
+
+        przycisk_ustaw_lokalizacje_cisnienie.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 180);
+
+        przycisk_wyslij_cisnienie_stacji.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 220);
+
+        tekst_odsylanie_poczatek.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 260);
+        wpisywanie_klawiatura_odsylanie_poczatek.zmiana_polozenia_wpisywanie_klawiatura(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 275);
+
+        tekst_odsylanie_koniec.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 300);
+        wpisywanie_klawiatura_odsylanie_koniec.zmiana_polozenia_wpisywanie_klawiatura(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 315);
+
+        przycisk_wyslij_odsylanie.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 345);
+
+        tekst_kat_obrot.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 385);
+        wpisywanie_klawiatura_kat_obrot.zmiana_polozenia_wpisywanie_klawiatura(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 400);
+
+        tekst_kat_wysokosc.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 425);
+        wpisywanie_klawiatura_kat_wysokosc.zmiana_polozenia_wpisywanie_klawiatura(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 440);
+
+        przycisk_wyslij_katy.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 470);
+
+        tekst_wysylanie_wolne.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 510);
+        wybieranie_scrollem_wysylanie_wolne.zmiana_polozenia_wybieranie_scrollem(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 525);
+
+        przycisk_wysylanie_wolne.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 20, rect_dane_do_portu.y + 560);
+
+        tekst_manualny.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 15);
+        wybieranie_scrollem_manualny.zmiana_polozenia_wybieranie_scrollem(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 30);
+        przycisk_wyslij_manualny.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 65);
+
+        tekst_wymagany_manualny.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 110);
+
+        tekst_tryb.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 135);
+        wybieranie_scrollem_tryb.zmiana_polozenia_wybieranie_scrollem(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 150);
+        przycisk_wyslij_tryb.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 185);
+
+        tekst_ruch.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 230);
+        wybieranie_scrollem_ruch.zmiana_polozenia_wybieranie_scrollem(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 245);
+        przycisk_wyslij_ruch.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 280);
+
+        tekst_podwozie.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 325);
+        wybieranie_scrollem_podwozie.zmiana_polozenia_wybieranie_scrollem(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 340);
+        przycisk_wyslij_podwozie.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 375);
+
+        tekst_czujnik.zmiana_polozenia_tekstu(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 420);
+        wybieranie_scrollem_czujnik.zmiana_polozenia_wybieranie_scrollem(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 435);
+        przycisk_wyslij_czujnik.zmiana_polozenia_przycisku(rect_dane_do_portu.x + 180, rect_dane_do_portu.y + 470);
+    }
+
+    /*void obliczanie_aktualne_katy()
+    {
+        int a_x = 0, a_z = 0;
+        if(imu.read() == 0)
+        {
+            a_x = imu.a.x;
+            a_z = imu.a.z;
+
+            aktualny_kat_wysokosc = -1*atan(double(a_x)/double(a_z))*180/M_PI;
+        }
+
+        int m_x = 0, m_y = 0, m_z = 0;
+        double wypadkowa_xz = 0;
+        double kat_xz = 0;
+
+        mag.read();
+
+        m_x = mag.m.x - (max_m_x+min_m_x)/2;
+        m_y = mag.m.y - (max_m_y+min_m_y)/2;
+        m_z = mag.m.z - (max_m_z+min_m_z)/2;
+
+        Serial.print(m_x);
+        Serial.print(" ; ");
+        Serial.print(m_y);
+        Serial.print(" ; ");
+        Serial.println(m_z);
+
+        wypadkowa_xz = sqrt(m_x*m_x + m_z*m_z);
+        kat_xz = atan(double(m_x)/double(m_z))*180/M_PI;
+
+        Serial.print("Kat xz");
+        Serial.println(kat_xz);
+
+        kat_xz += aktualny_kat_wysokosc;
+
+        m_x = sin(kat_xz*M_PI/180) * wypadkowa_xz;
+        m_z = cos(kat_xz*M_PI/180) * wypadkowa_xz;
+
+        Serial.print(m_x);
+        Serial.print(" ; ");
+        Serial.println(m_z);
+
+        aktualny_kat_obrot = atan2(-1*m_y, m_x)*180/M_PI;
+
+    }
+
+    void obrot_poziom(double kat)
+    {
+        int liczba_krokow = kat * 2.658;
+        int obracanie = liczba_krokow - aktualny_kat_obrot*2.658;
+
+        if (obracanie + 957 < fabs(obracanie))
+        {
+            obracanie += 957;
+        }
+        else if (fabs(obracanie - 957) < obracanie)
+        {
+            obracanie = obracanie - 957;
+        }
+
+        if (obracanie > 30)
+        {
+            obracanie = 30;
+        }
+        else if (obracanie < -30)
+        {
+            obracanie = -30;
+        }
+
+        Serial.print("Liczba krokow obrot: ");
+        Serial.println(obracanie);
+
+        if (obracanie > 0)
+        {
+            digitalWrite(pin_poziom_kierunek, HIGH);
+            for (int i = 0; i < obracanie; i++)
+            {
+                digitalWrite(pin_poziom_kroki, HIGH);
+                delayMicroseconds(10000);
+                digitalWrite(pin_poziom_kroki, LOW);
+                delayMicroseconds(10000);
+            }
+        }
+        else if (obracanie < 0)
+        {
+            obracanie *= -1;
+            digitalWrite(pin_poziom_kierunek, LOW);
+
+            for (int i = 0; i < obracanie; i++)
+            {
+                digitalWrite(pin_poziom_kroki, HIGH);
+                delayMicroseconds(10000);
+                digitalWrite(pin_poziom_kroki, LOW);
+                delayMicroseconds(10000);
+            }
+        }
+    }
+
+    void obrot_wysokosc(double kat)
+    {
+        int liczba_krokow = kat * 2.658;
+        int obracanie = liczba_krokow - aktualny_kat_wysokosc*2.658;
+
+        if (obracanie + 957 < fabs(obracanie))
+        {
+            obracanie += 957;
+        }
+        else if (fabs(obracanie - 957) < obracanie)
+        {
+            obracanie = obracanie - 957;
+        }
+
+        if (obracanie > 30)
+        {
+            obracanie = 30;
+        }
+        else if (obracanie < -30)
+        {
+            obracanie = -30;
+        }
+
+        Serial.print("Liczba krokow wysokosc: ");
+        Serial.println(obracanie);
+
+        if (obracanie > 0)
+        {
+            digitalWrite(pin_wysokosc_kierunek, LOW);
+            for (int i = 0; i < obracanie; i++)
+            {
+                digitalWrite(pin_wysokosc_kroki, HIGH);
+                delayMicroseconds(10000);
+                digitalWrite(pin_wysokosc_kroki, LOW);
+                delayMicroseconds(10000);
+            }
+        }
+        else if (obracanie < 0)
+        {
+            obracanie *= -1;
+            digitalWrite(pin_wysokosc_kierunek, HIGH);
+            for (int i = 0; i < obracanie; i++)
+            {
+                digitalWrite(pin_wysokosc_kroki, HIGH);
+                delayMicroseconds(10000);
+                digitalWrite(pin_wysokosc_kroki, LOW);
+                delayMicroseconds(10000);
+            }
+        }
+    }*/
+
+    void zamiana_lokalizacja_na_dziesietna(double &szerokosc_dziesietna_stacji, double &dlugosc_dziesietna_stacji, double &szerokosc_dziesietna_cansata, double &dlugosc_dziesietna_cansata)
+    {
+        int stopnie[2];
+        double lokalizacja[2];
+
+        //OBLICZENIA - STACJA
+        stopnie[0] = 0;
+        stopnie[1] = 0;
+        if(wpisywanie_klawiatura_szerokosc_geo.zwroc_liczba() != 0)
+        {
+            lokalizacja[0] = wpisywanie_klawiatura_szerokosc_geo.zwroc_liczba();
+        }
+        else
+        {
+            lokalizacja[0] = wskaznik_wykres[33]->zwroc_ostatnia_wartosc_double();
+        }
+
+        if(wpisywanie_klawiatura_dlugosc_geo.zwroc_liczba() != 0)
+        {
+            lokalizacja[0] = wpisywanie_klawiatura_dlugosc_geo.zwroc_liczba();
+        }
+        else
+        {
+            lokalizacja[1] = wskaznik_wykres[34]->zwroc_ostatnia_wartosc_double();
+        }
+
+        stopnie[0] = lokalizacja[0] / 100;
+        stopnie[1] = lokalizacja[1] / 100;
+
+        lokalizacja[0] -= stopnie[0] * 100;
+        lokalizacja[1] -= stopnie[1] * 100;
+
+        szerokosc_dziesietna_stacji = stopnie[0] + lokalizacja[0] / 60;
+        dlugosc_dziesietna_stacji = stopnie[1] + lokalizacja[1] / 60;
+
+
+        //OBLICZENIA - CANSAT
+        stopnie[0] = 0;
+        stopnie[1] = 0;
+        lokalizacja[0] = wskaznik_wykres[14]->zwroc_ostatnia_wartosc_double();
+        lokalizacja[1] = wskaznik_wykres[15]->zwroc_ostatnia_wartosc_double();
+
+        stopnie[0] = lokalizacja[0] / 100;
+        stopnie[1] = lokalizacja[1] / 100;
+
+        lokalizacja[0] -= stopnie[0] * 100;
+        lokalizacja[1] -= stopnie[1] * 100;
+
+        szerokosc_dziesietna_cansata = stopnie[0] + lokalizacja[0] / 60;
+        dlugosc_dziesietna_cansata = stopnie[1] + lokalizacja[1] / 60;
+    }
+
+    void obliczanie_kata_obrot(double roznica_szerokosc, double roznica_dlugosc)
+    {
+        if (roznica_dlugosc != 0)
+        {
+            kat_obrot = (atan(fabs(roznica_szerokosc / roznica_dlugosc))) * 180 / M_PI;
+        }
+        else
+        {
+            kat_obrot = 90;
+        }
+
+        if (roznica_dlugosc <= 0 && roznica_szerokosc >= 0)
+        {
+            kat_obrot = 270 + kat_obrot;
+        }
+        else if (roznica_dlugosc <= 0 && roznica_szerokosc <= 0)
+        {
+            kat_obrot = 270 - kat_obrot;
+        }
+        else if (roznica_dlugosc >= 0 && roznica_szerokosc <= 0)
+        {
+            kat_obrot = 90 + kat_obrot;
+        }
+        else
+        {
+            kat_obrot = 90 - kat_obrot;
+        }
+    }
+
+    void ograniczenia_kat_wysokosc()
+    {
+        if (kat_wysokosc > 50)
+        {
+            kat_wysokosc = 50;
+        }
+        if (kat_wysokosc < 0)
+        {
+            kat_wysokosc = 0;
+        }
+    }
+
+    void obliczanie_kata_wysokosc(double roznica_wysokosci, double odleglosc_prosta)
+    {
+        if (odleglosc_prosta != 0)
+        {
+            kat_wysokosc = (atan(fabs(roznica_wysokosci / odleglosc_prosta))) * 180 / M_PI;
+        }
+        else
+        {
+            kat_wysokosc = 90;
+        }
+
+        if (roznica_wysokosci < 0)
+        {
+            kat_wysokosc *= -1;
+        }
+
+    }
+
+    void obliczanie_odleglosci()
+    {
+        double szerokosc_dziesietna_stacji = 0;
+        double dlugosc_dziesietna_stacji = 0;
+
+        double szerokosc_dziesietna_cansata = 0;
+        double dlugosc_dziesietna_cansata = 0;
+
+        zamiana_lokalizacja_na_dziesietna(szerokosc_dziesietna_stacji, dlugosc_dziesietna_stacji, szerokosc_dziesietna_cansata, dlugosc_dziesietna_cansata);
+
+        double roznica_szerokosc_1_stopien_metry = 2 * M_PI * 6371000 / 360;
+        double roznica_dlugosc_1_stopien_metry = 2 * M_PI * 6371000 / 360 * cos(szerokosc_dziesietna_stacji * 2 * M_PI / 360);
+
+        double roznica_szerokosc = (szerokosc_dziesietna_cansata - szerokosc_dziesietna_stacji) * roznica_szerokosc_1_stopien_metry;
+        double roznica_dlugosc = (dlugosc_dziesietna_cansata - dlugosc_dziesietna_stacji) * roznica_dlugosc_1_stopien_metry;
+
+        odleglosc_prosta = sqrt(roznica_szerokosc * roznica_szerokosc + roznica_dlugosc * roznica_dlugosc);
+
+        odleglosc_calkowita = sqrt(odleglosc_prosta * odleglosc_prosta + roznica_wysokosci * roznica_wysokosci);
+
+        obliczanie_kata_obrot(roznica_szerokosc, roznica_dlugosc);
+
+        obliczanie_kata_wysokosc(roznica_wysokosci, odleglosc_prosta);
+    }
+
+    void obliczanie_katow_anteny()
+    {
+        double cisnienie_stacja_aktualne = 0;
+        double temperatura_stacja_aktualna = 0;
+
+        if(wpisywanie_klawiatura_cisnienie_stacji.zwroc_liczba() != 0)
+        {
+            cisnienie_stacja_aktualne = wpisywanie_klawiatura_cisnienie_stacji.zwroc_liczba();
+        }
+        else
+        {
+            cisnienie_stacja_aktualne = wskaznik_wykres[36]->zwroc_ostatnia_wartosc_double();
+        }
+
+        if(wpisywanie_klawiatura_temperatura_stacji.zwroc_liczba() != 0)
+        {
+            temperatura_stacja_aktualna = wpisywanie_klawiatura_temperatura_stacji.zwroc_liczba();
+        }
+        else
+        {
+            temperatura_stacja_aktualna = wskaznik_wykres[35]->zwroc_ostatnia_wartosc_double();
+        }
+
+        roznica_wysokosci = -1 * log(wskaznik_wykres[30]->zwroc_ostatnia_wartosc_double() / cisnienie_stacja_aktualne) * 8.3144598 * (273.15 + temperatura_stacja_aktualna) / (0.0289644 * 9.81);
+
+        obliczanie_odleglosci();
+
+        /*obliczanie_aktualne_katy();
+        obrot_poziom();
+        obrot_wysokosc();*/
+    }
+
+void wysylanie_danych()
+{
+    DWORD dwBytesToWrite = (DWORD)strlen(wiadomosc_do_wyslania);
+    DWORD dwBytesWritten = 0;
+    BOOL bErrorFlag = FALSE;
+
+    bool error = 0;
+
+    if (hSerial == INVALID_HANDLE_VALUE)
+    {
+        error = 1;
+    }
+
+    bErrorFlag = WriteFile(hSerial, wiadomosc_do_wyslania, dwBytesToWrite, &dwBytesWritten, NULL);
+
+    if (FALSE == bErrorFlag)
+    {
+        error = 1;
+    }
+    else if(dwBytesWritten != dwBytesToWrite)
+    {
+        error = 1;
+    }
+
+    if(error == 1)
+    {
+        cout<<"ERROR Port szeregowy - wysylanie"<<endl;
+    }
+    else
+    {
+        cout<<"Wyslanie do portu"<<endl;
+    }
+
+    for(int i=0; i<11; i++)
+    {
+        wiadomosc_do_wyslania[i] = 20;
+    }
 }
+};
+
+class klasa_zapisywanie_do_pliku
+{
+private:
+    fstream plik;
+
+public:
+    klasa_zapisywanie_do_pliku()
+    {
+        plik.open("plik.thx", ios::app);
+    }
+    ~klasa_zapisywanie_do_pliku()
+    {
+        plik.close();
+    }
+
+    void zapis()
+    {
+        for(int i=0; i<liczba_wykresow_int; i++)
+        {
+            plik<<wskaznik_wykres[i]->zwroc_ostatnia_wartosc_int()<<";";
+        }
+        for(int i=liczba_wykresow_int; i<liczba_wykresow; i++)
+        {
+            plik<<wskaznik_wykres[i]->zwroc_ostatnia_wartosc_double()<<";";
+        }
+        plik<<endl;
+    }
+};
 
 int char_100_to_cyfra(char znak)
 {
@@ -1492,82 +3300,169 @@ void rozszyfrowywanie_double(string gotowy_tekst, int &nr_znaku, double &liczba,
     liczba = liczba_int / double(potega(10, liczba_miejsc_po_przecinku));
 }
 
-void rozszyfrowywanie(string gotowy_tekst)
+bool liczenie_srednikow(string gotowy_tekst)
 {
-    int nr_znaku = 1;
+    int liczba_srednikow = 0;
+    for(unsigned int i=0; i<gotowy_tekst.size(); i++)
+    {
+        if(gotowy_tekst[i] == 18 || gotowy_tekst[i] == 19 || gotowy_tekst[i] == 16 || gotowy_tekst[i] == 17)
+        {
+            liczba_srednikow++;
+        }
+    }
 
-    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, godzina);
-    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, minuta);
-    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, sekunda);
-    if (gotowy_tekst[nr_znaku - 1] == 16)
+    if(liczba_srednikow == 43)
     {
-        lokalizacja_znak[0] = 'N';
+        return 1;
     }
     else
     {
-        lokalizacja_znak[0] = 'S';
+        cout<<"Zla liczba srednikow: "<<liczba_srednikow<<endl;
+        return 0;
     }
-    gotowy_tekst[nr_znaku - 1] = 19;
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[0], 4);
-    if (gotowy_tekst[nr_znaku - 1] == 16)
+}
+
+bool rozszyfrowywanie(string gotowy_tekst)
+{
+    if(liczenie_srednikow(gotowy_tekst) == 1)
     {
-        lokalizacja_znak[1] = 'W';
+        int nr_znaku = 1;
+        double suma_kontrolna_program = 0;
+        double suma_kontrolna_cansat = 0;
+
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, numer_pomiaru);
+        suma_kontrolna_program += numer_pomiaru;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, godzina);
+        suma_kontrolna_program += godzina;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, minuta);
+        suma_kontrolna_program += minuta;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, sekunda);
+        suma_kontrolna_program += sekunda;
+        if (gotowy_tekst[nr_znaku - 1] == 16)
+        {
+            lokalizacja_znak[0] = 'N';
+        }
+        else
+        {
+            lokalizacja_znak[0] = 'S';
+        }
+        gotowy_tekst[nr_znaku - 1] = 19;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[0], 4);
+        suma_kontrolna_program += lokalizacja[0];
+        if (gotowy_tekst[nr_znaku - 1] == 16)
+        {
+            lokalizacja_znak[1] = 'W';
+        }
+        else
+        {
+            lokalizacja_znak[1] = 'E';
+        }
+        gotowy_tekst[nr_znaku - 1] = 19;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[1], 4);
+        suma_kontrolna_program += lokalizacja[1];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wysokosc, 2);
+        suma_kontrolna_program += wysokosc;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_DS18B20, 2);
+        suma_kontrolna_program += temperatura_DS18B20;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_SHT, 2);
+        suma_kontrolna_program += temperatura_SHT;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wilgotnosc, 2);
+        suma_kontrolna_program += wilgotnosc;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[0], 2);
+        suma_kontrolna_program += akcelerometr[0];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[1], 2);
+        suma_kontrolna_program += akcelerometr[1];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[2], 2);
+        suma_kontrolna_program += akcelerometr[2];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[0], 2);
+        suma_kontrolna_program += zyroskop[0];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[1], 2);
+        suma_kontrolna_program += zyroskop[1];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[2], 2);
+        suma_kontrolna_program += zyroskop[2];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[0], 2);
+        suma_kontrolna_program += magnetometr[0];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[1], 2);
+        suma_kontrolna_program += magnetometr[1];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[2], 2);
+        suma_kontrolna_program += magnetometr[2];
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_altimu, 2);
+        suma_kontrolna_program += temperatura_altimu;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, cisnienie_altimu, 2);
+        suma_kontrolna_program += cisnienie_altimu;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wilgotnosc_ziemi, 2);
+        suma_kontrolna_program += wilgotnosc_ziemi;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, kolor_jasnosc);
+        suma_kontrolna_program += kolor_jasnosc;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, kolor_czerwony);
+        suma_kontrolna_program += kolor_czerwony;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, kolor_zielony);
+        suma_kontrolna_program += kolor_zielony;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, kolor_niebieski);
+        suma_kontrolna_program += kolor_niebieski;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, odleglosc_przeszkoda);
+        suma_kontrolna_program += odleglosc_przeszkoda;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych);
+        suma_kontrolna_program += spis_dzialajacych;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, napiecie_baterii, 2);
+        suma_kontrolna_program += napiecie_baterii;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, opis_dzialania);
+        suma_kontrolna_program += opis_dzialania;
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, RSSI_cansat);
+        suma_kontrolna_program += RSSI_cansat;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, suma_kontrolna_cansat, 4);
+
+        if(suma_kontrolna_cansat-suma_kontrolna_program > 0.1 || suma_kontrolna_cansat-suma_kontrolna_program < -0.1)
+        {
+            cout<<endl<<"ERROR - suma kontrolna----------------------"<<endl;
+            cout<<"Suma kontrolna program: "<<suma_kontrolna_program<<endl;
+            cout<<"Suma kontrolna CanSat: "<<suma_kontrolna_cansat<<endl;
+            cout<<"Roznica: "<<suma_kontrolna_cansat - suma_kontrolna_program<<endl<<endl;
+        }
+
+
+        if (gotowy_tekst[nr_znaku - 1] == 16)
+        {
+            lokalizacja_znak_stacja[0] = 'N';
+        }
+        else
+        {
+            lokalizacja_znak_stacja[0] = 'S';
+        }
+        gotowy_tekst[nr_znaku - 1] = 19;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja_stacja[0], 4);
+        if (gotowy_tekst[nr_znaku - 1] == 16)
+        {
+            lokalizacja_znak_stacja[1] = 'W';
+        }
+        else
+        {
+            lokalizacja_znak_stacja[1] = 'E';
+        }
+        gotowy_tekst[nr_znaku - 1] = 19;
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja_stacja[1], 4);
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_altimu_stacja, 2);
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, cisnienie_altimu_stacja, 2);
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr_stacja[0], 2);
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr_stacja[1], 2);
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr_stacja[2], 2);
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych_stacja);
+        rozszyfrowywanie_int(gotowy_tekst, nr_znaku, RSSI_stacja);
     }
     else
     {
-        lokalizacja_znak[1] = 'E';
+        if(gotowy_tekst[0] == 15 &&gotowy_tekst[1] == 15 &&gotowy_tekst[2] == 15)
+        {
+            cout<<"BRAK SYGNALU ------------------------------"<<endl;
+            cout<<"BRAK SYGNALU ------------------------------"<<endl;
+            cout<<"BRAK SYGNALU ------------------------------"<<endl;
+            cout<<"BRAK SYGNALU ------------------------------"<<endl;
+            return 0;
+        }
+        return 0;
     }
-    gotowy_tekst[nr_znaku - 1] = 19;
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja[1], 4);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wysokosc, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_DS18B20, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_SHT, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wilgotnosc, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[0], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[1], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr[2], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[0], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[1], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, zyroskop[2], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[0], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[1], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr[2], 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_altimu, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, cisnienie_altimu, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, wilgotnosc_ziemi, 2);
-    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, napiecie_baterii, 2);
-    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, opis_dzialania);
-    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, RSSI_cansat);
-    if (gotowy_tekst[nr_znaku - 1] == 16)
-    {
-        lokalizacja_znak_stacja[0] = 'N';
-    }
-    else
-    {
-        lokalizacja_znak_stacja[0] = 'S';
-    }
-    gotowy_tekst[nr_znaku - 1] = 19;
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja_stacja[0], 4);
-    if (gotowy_tekst[nr_znaku - 1] == 16)
-    {
-        lokalizacja_znak_stacja[1] = 'W';
-    }
-    else
-    {
-        lokalizacja_znak_stacja[1] = 'E';
-    }
-    gotowy_tekst[nr_znaku - 1] = 19;
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, lokalizacja_stacja[1], 4);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, temperatura_altimu_stacja, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, cisnienie_altimu_stacja, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, roznica_wysokosci, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, odleglosc_prosta, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, odleglosc_calkowita, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, kat_wysokosc, 2);
-    rozszyfrowywanie_double(gotowy_tekst, nr_znaku, kat_obrot, 2);
-    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych_stacja);
-    rozszyfrowywanie_int(gotowy_tekst, nr_znaku, RSSI_stacja);
+
+    return 1;
 }
 
 void wyswietlanie_odebranych()
@@ -1671,17 +3566,20 @@ string odczytywanie_portu_szeregowego(int liczba_odbieranych_znakow)
     return tekst;
 }
 
-bool odbieranie_danych(bool *odebrano)
+int odbieranie_danych(bool *odebrano)
 {
     string liczba_znakow_string = odczytywanie_portu_szeregowego(16);
     if(liczba_znakow_string == "error")
     {
+        cout<<"LICZBA ZNAKOW ERROR"<<endl;
         *odebrano = 1;
         return 0;
     }
     int liczba_znakow = 0;
     int znaki[14] = {-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2};
     char tablica_cyfr[11] = {'x','0','1','2','3','4','5','6','7','8','9'};
+
+    cout<<endl<<liczba_znakow_string;
 
     string tekst ="error";
 
@@ -1714,19 +3612,27 @@ bool odbieranie_danych(bool *odebrano)
 
     if(liczba_znakow != 0)
     {
+        cout<<"wpisywanie do tekst, liczba znakow: "<<liczba_znakow<<endl;
         tekst = odczytywanie_portu_szeregowego(liczba_znakow);
         tekst += 18;
     }
 
     if(tekst == "error")
     {
+        cout<<"TEKST ERROR"<<endl;
         *odebrano = 1;
         return 0;
     }
 
+    cout<<"Przed rozszyfrowywaniem"<<endl;
     if(liczba_znakow != 0)
     {
-        rozszyfrowywanie(tekst);
+        cout<<tekst<<endl;
+        if(rozszyfrowywanie(tekst) == 0)
+        {
+            *odebrano = 1;
+            return 2;
+        }
     }
 
     //wyswietlanie_odebranych();
@@ -1735,75 +3641,45 @@ bool odbieranie_danych(bool *odebrano)
     return 1;
 }
 
-void wysylanie_danych(char DataBuffer[])
+void dopisywanie_do_wykresow()
 {
-    DWORD dwBytesToWrite = (DWORD)strlen(DataBuffer);
-    DWORD dwBytesWritten = 0;
-    BOOL bErrorFlag = FALSE;
-
-    bool error = 0;
-
-
-    if (hSerial == INVALID_HANDLE_VALUE)
-    {
-        error = 1;
-    }
-
-    bErrorFlag = WriteFile(hSerial, DataBuffer, dwBytesToWrite, &dwBytesWritten, NULL);
-
-    if (FALSE == bErrorFlag)
-    {
-        error = 1;
-    }
-    else if(dwBytesWritten != dwBytesToWrite)
-    {
-        error = 1;
-    }
-
-    if(error == 1)
-    {
-        cout<<"ERROR Port szeregowy"<<endl;
-    }
-}
-
-void dopisywanie_do_wykresow(klasa_wykres *wskaznik_wykres[])
-{
-    wskaznik_wykres[0]->dopisz(godzina);
-    wskaznik_wykres[1]->dopisz(minuta);
-    wskaznik_wykres[2]->dopisz(sekunda);
-    wskaznik_wykres[3]->dopisz(spis_dzialajacych);
-    wskaznik_wykres[4]->dopisz(opis_dzialania);
-    wskaznik_wykres[5]->dopisz(RSSI_cansat);
-    wskaznik_wykres[6]->dopisz(spis_dzialajacych_stacja);
-    wskaznik_wykres[7]->dopisz(RSSI_stacja);
-    wskaznik_wykres[8]->dopisz(lokalizacja[0]);
-    wskaznik_wykres[9]->dopisz(lokalizacja[1]);
-    wskaznik_wykres[10]->dopisz(wysokosc);
-    wskaznik_wykres[11]->dopisz(temperatura_DS18B20);
-    wskaznik_wykres[12]->dopisz(temperatura_SHT);
-    wskaznik_wykres[13]->dopisz(wilgotnosc);
-    wskaznik_wykres[14]->dopisz(akcelerometr[0]);
-    wskaznik_wykres[15]->dopisz(akcelerometr[1]);
-    wskaznik_wykres[16]->dopisz(akcelerometr[2]);
-    wskaznik_wykres[17]->dopisz(zyroskop[0]);
-    wskaznik_wykres[18]->dopisz(zyroskop[1]);
-    wskaznik_wykres[19]->dopisz(zyroskop[2]);
-    wskaznik_wykres[20]->dopisz(magnetometr[0]);
-    wskaznik_wykres[21]->dopisz(magnetometr[1]);
-    wskaznik_wykres[22]->dopisz(magnetometr[2]);
-    wskaznik_wykres[23]->dopisz(temperatura_altimu);
-    wskaznik_wykres[24]->dopisz(cisnienie_altimu);
-    wskaznik_wykres[25]->dopisz(wilgotnosc_ziemi);
-    wskaznik_wykres[26]->dopisz(napiecie_baterii);
-    wskaznik_wykres[27]->dopisz(lokalizacja_stacja[0]);
-    wskaznik_wykres[28]->dopisz(lokalizacja_stacja[1]);
-    wskaznik_wykres[29]->dopisz(temperatura_altimu_stacja);
-    wskaznik_wykres[30]->dopisz(cisnienie_altimu_stacja);
-    wskaznik_wykres[31]->dopisz(roznica_wysokosci);
-    wskaznik_wykres[32]->dopisz(odleglosc_prosta);
-    wskaznik_wykres[33]->dopisz(odleglosc_calkowita);
-    wskaznik_wykres[34]->dopisz(kat_wysokosc);
-    wskaznik_wykres[35]->dopisz(kat_obrot);
+    wskaznik_wykres[0]->dopisz(numer_pomiaru);
+    wskaznik_wykres[1]->dopisz(godzina);
+    wskaznik_wykres[2]->dopisz(minuta);
+    wskaznik_wykres[3]->dopisz(sekunda);
+    wskaznik_wykres[4]->dopisz(kolor_jasnosc);
+    wskaznik_wykres[5]->dopisz(kolor_czerwony);
+    wskaznik_wykres[6]->dopisz(kolor_zielony);
+    wskaznik_wykres[7]->dopisz(kolor_niebieski);
+    wskaznik_wykres[8]->dopisz(odleglosc_przeszkoda);
+    wskaznik_wykres[9]->dopisz(spis_dzialajacych);
+    wskaznik_wykres[10]->dopisz(opis_dzialania);
+    wskaznik_wykres[11]->dopisz(RSSI_cansat);
+    wskaznik_wykres[12]->dopisz(spis_dzialajacych_stacja);
+    wskaznik_wykres[13]->dopisz(RSSI_stacja);
+    wskaznik_wykres[14]->dopisz(lokalizacja[0]);
+    wskaznik_wykres[15]->dopisz(lokalizacja[1]);
+    wskaznik_wykres[16]->dopisz(wysokosc);
+    wskaznik_wykres[17]->dopisz(temperatura_DS18B20);
+    wskaznik_wykres[18]->dopisz(temperatura_SHT);
+    wskaznik_wykres[19]->dopisz(wilgotnosc);
+    wskaznik_wykres[20]->dopisz(akcelerometr[0]);
+    wskaznik_wykres[21]->dopisz(akcelerometr[1]);
+    wskaznik_wykres[22]->dopisz(akcelerometr[2]);
+    wskaznik_wykres[23]->dopisz(zyroskop[0]);
+    wskaznik_wykres[24]->dopisz(zyroskop[1]);
+    wskaznik_wykres[25]->dopisz(zyroskop[2]);
+    wskaznik_wykres[26]->dopisz(magnetometr[0]);
+    wskaznik_wykres[27]->dopisz(magnetometr[1]);
+    wskaznik_wykres[28]->dopisz(magnetometr[2]);
+    wskaznik_wykres[29]->dopisz(temperatura_altimu);
+    wskaznik_wykres[30]->dopisz(cisnienie_altimu);
+    wskaznik_wykres[31]->dopisz(wilgotnosc_ziemi);
+    wskaznik_wykres[32]->dopisz(napiecie_baterii);
+    wskaznik_wykres[33]->dopisz(lokalizacja_stacja[0]);
+    wskaznik_wykres[34]->dopisz(lokalizacja_stacja[1]);
+    wskaznik_wykres[35]->dopisz(temperatura_altimu_stacja);
+    wskaznik_wykres[36]->dopisz(cisnienie_altimu_stacja);
 }
 
 int main(int argc, char *args[])
@@ -1811,7 +3687,7 @@ int main(int argc, char *args[])
     SDL_Init(SDL_INIT_EVERYTHING);
     TTF_Init();
 
-    okno = SDL_CreateWindow("Rysowanie wykresow", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1100, 800, SDL_WINDOW_RESIZABLE);
+    okno = SDL_CreateWindow("Rysowanie wykresow", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1100, 655, SDL_WINDOW_RESIZABLE);
     ekran = SDL_CreateRenderer(okno, -1, SDL_RENDERER_ACCELERATED);
     SDL_SetWindowMinimumSize(okno, 550, 300);
 
@@ -1820,7 +3696,8 @@ int main(int argc, char *args[])
     rect_okno.w = 1200;
     rect_okno.h = 600;
 
-    {//PRZYGOTOWYWANIE CZCIONEK I KURSOROW
+    {
+        //PRZYGOTOWYWANIE CZCIONEK I KURSOROW
         czcionka_12 = TTF_OpenFont("arial.ttf", 12);
         czcionka_16 = TTF_OpenFont("arial.ttf", 16);
 
@@ -1846,114 +3723,142 @@ int main(int argc, char *args[])
     klasa_lista_dzialajacych lista_dzialajacych;
     klasa_tabela_COM tabela_COM;
     klasa_co_robi_cansat co_robi_cansat;
-
-    klasa_wykres *wskaznik_wykres[liczba_wykresow];
+    klasa_dane_do_portu dane_do_portu;
+    klasa_zapisywanie_do_pliku zapisywanie_do_pliku;
 
     klasa_wykres *wskaznik_wykres_dostosowywanie = NULL;
     void (klasa_wykres::*wskaznik_funkcji_wykres)();
 
-    {//PRZYPISANIE WYKRESOW DO WSKAZNIKOW
-        for(int i=0; i<8; i++)
+    {
+        //PRZYPISANIE WYKRESOW DO WSKAZNIKOW
+        for(int i=0; i<liczba_wykresow_int; i++)
         {
             wskaznik_wykres[i] = &tablica_wykresow_int[i];
         }
-        for(int i=0; i<28; i++)
+        for(int i=0; i<liczba_wykresow_double; i++)
         {
-            wskaznik_wykres[i+8] = &tablica_wykresow_double[i];
+            wskaznik_wykres[i+liczba_wykresow_int] = &tablica_wykresow_double[i];
         }
     }
 
-    {//USTAWIANIA WIDOCZNYCH I NIEWIDOCZNYCH WYKRESOW
-        wskaznik_wykres[5]->wyswietlaj_wykres(true);
-        wskaznik_wykres[7]->wyswietlaj_wykres(true);
-        wskaznik_wykres[23]->wyswietlaj_wykres(true);
-        wskaznik_wykres[24]->wyswietlaj_wykres(true);
-        wskaznik_wykres[25]->wyswietlaj_wykres(true);
-        wskaznik_wykres[26]->wyswietlaj_wykres(true);
-        wskaznik_wykres[31]->wyswietlaj_wykres(true);
+    {
+        //USTAWIANIA WIDOCZNYCH I NIEWIDOCZNYCH WYKRESOW
+        wskaznik_wykres[11]->wyswietlaj_wykres(true);
+        wskaznik_wykres[13]->wyswietlaj_wykres(true);
+        wskaznik_wykres[17]->wyswietlaj_wykres(true);
+        wskaznik_wykres[18]->wyswietlaj_wykres(true);
+        wskaznik_wykres[19]->wyswietlaj_wykres(true);
+        wskaznik_wykres[30]->wyswietlaj_wykres(true);
+        wskaznik_wykres[32]->wyswietlaj_wykres(true);
     }
 
-    {//USTAWIENIE POLOZENIA WYKRESOW
-        wskaznik_wykres[5]->zmiana_polozenia_wykresu(300, 40);
-        wskaznik_wykres[7]->zmiana_polozenia_wykresu(300, 220);
-        wskaznik_wykres[23]->zmiana_polozenia_wykresu(300, 400);
-        wskaznik_wykres[24]->zmiana_polozenia_wykresu(300, 580);
-        wskaznik_wykres[25]->zmiana_polozenia_wykresu(650, 40);
-        wskaznik_wykres[26]->zmiana_polozenia_wykresu(650, 220);
-        wskaznik_wykres[31]->zmiana_polozenia_wykresu(650, 400);
+    {
+        //USTAWIENIE POLOZENIA WYKRESOW
+        wskaznik_wykres[11]->zmiana_polozenia_wykresu(300, 40);
+        wskaznik_wykres[13]->zmiana_polozenia_wykresu(300, 40);
+        wskaznik_wykres[17]->zmiana_polozenia_wykresu(300, 40);
+        wskaznik_wykres[18]->zmiana_polozenia_wykresu(300, 40);
+        wskaznik_wykres[19]->zmiana_polozenia_wykresu(300, 40);
+        wskaznik_wykres[30]->zmiana_polozenia_wykresu(300, 40);
+        wskaznik_wykres[32]->zmiana_polozenia_wykresu(300, 40);
     }
+
+    bool myszka_najechala_na_cos = 0;
+    bool myszka_najechala_na_cos_zmiana_kursora = 0;
 
     bool myszka_najechala_na_wykres = 0;
     bool myszka_najechala_na_lista_dzialajacych = 0;
     bool myszka_najechala_na_tabela_COM = 0;
     bool myszka_najechala_na_co_robi_cansat = 0;
+    bool myszka_najechala_na_dane_do_portu = 0;
+    bool myszka_najechala_na_wybieranie_scrollem = 0;
+    bool myszka_najechala_na_przyciski = 0;
+    bool myszka_najechala_na_wpisywanie_klawiatura = 0;
 
-    bool wcisniety_lewy_przycisk_myszy = 0;
     bool wcisniety_shift = 0;
-    bool ruch_myszki = 0;
 
-    {//PRZYGOTOWANIE OBIEKTOW - WYKRESY
-        wskaznik_wykres[0]->przygotowywanie_obiektu("Godzina[h]", "czas[s]");
-        wskaznik_wykres[1]->przygotowywanie_obiektu("Minuta[min]", "czas[s]");
-        wskaznik_wykres[2]->przygotowywanie_obiektu("Sekunda[s]", "czas[s]");
-        wskaznik_wykres[3]->przygotowywanie_obiektu("Spis dzialajacych", "czas[s]");
-        wskaznik_wykres[4]->przygotowywanie_obiektu("Opis dzialania", "czas[s]");
-        wskaznik_wykres[5]->przygotowywanie_obiektu("RSSI Cansat", "czas[s]");
-        wskaznik_wykres[6]->przygotowywanie_obiektu("Spis dzialajacych stacja", "czas[s]");
-        wskaznik_wykres[7]->przygotowywanie_obiektu("RSSI stacja", "czas[s]");
-        wskaznik_wykres[8]->przygotowywanie_obiektu("Szerokosc geo", "czas[s]");
-        wskaznik_wykres[9]->przygotowywanie_obiektu("Wysokosc geo", "czas[s]");
-        wskaznik_wykres[10]->przygotowywanie_obiektu("Wysokosc gps", "czas[s]");
-        wskaznik_wykres[11]->przygotowywanie_obiektu("Temperatura DS18B20[*C]", "czas[s]");
-        wskaznik_wykres[12]->przygotowywanie_obiektu("Temperatura SHT[*C]", "czas[s]");
-        wskaznik_wykres[13]->przygotowywanie_obiektu("Wilgotnosc[%]", "czas[s]");
-        wskaznik_wykres[14]->przygotowywanie_obiektu("Akceleromatr x", "czas[s]");
-        wskaznik_wykres[15]->przygotowywanie_obiektu("Akceleromatr y", "czas[s]");
-        wskaznik_wykres[16]->przygotowywanie_obiektu("Akceleromatr z", "czas[s]");
-        wskaznik_wykres[17]->przygotowywanie_obiektu("Zyroskop x", "czas[s]");
-        wskaznik_wykres[18]->przygotowywanie_obiektu("Zyroskop y", "czas[s]");
-        wskaznik_wykres[19]->przygotowywanie_obiektu("Zyroskop z", "czas[s]");
-        wskaznik_wykres[20]->przygotowywanie_obiektu("Magnetometr x", "czas[s]");
-        wskaznik_wykres[21]->przygotowywanie_obiektu("Magnetometr y", "czas[s]");
-        wskaznik_wykres[22]->przygotowywanie_obiektu("Magnetometr z", "czas[s]");
-        wskaznik_wykres[23]->przygotowywanie_obiektu("Temperatura altimu[*C]", "czas[s]");
-        wskaznik_wykres[24]->przygotowywanie_obiektu("Cisnienie altimu[hPa]", "czas[s]");
-        wskaznik_wykres[25]->przygotowywanie_obiektu("Wilgotnosc ziemi[%]", "czas[s]");
-        wskaznik_wykres[26]->przygotowywanie_obiektu("Napiecie baterii", "czas[s]");
-        wskaznik_wykres[27]->przygotowywanie_obiektu("Wys geo stacja", "czas[s]");
-        wskaznik_wykres[28]->przygotowywanie_obiektu("Szer geo stacja", "czas[s]");
-        wskaznik_wykres[29]->przygotowywanie_obiektu("Temp altimu stacja[*C]", "czas[s]");
-        wskaznik_wykres[30]->przygotowywanie_obiektu("Cisn altimu stacja[hPa]", "czas[s]");
-        wskaznik_wykres[31]->przygotowywanie_obiektu("Roznica wysokosci[m]", "czas[s]");
-        wskaznik_wykres[32]->przygotowywanie_obiektu("Odleglosc prosta[m]", "czas[s]");
-        wskaznik_wykres[33]->przygotowywanie_obiektu("Odleglosc calkowita[m]", "czas[s]");
-        wskaznik_wykres[34]->przygotowywanie_obiektu("Kat wysokosc", "czas[s]");
-        wskaznik_wykres[35]->przygotowywanie_obiektu("Kat obrot", "czas[s]");
+    {
+        //PRZYGOTOWANIE OBIEKTOW - WYKRESY
+        wskaznik_wykres[0]->przygotowywanie_obiektu("Numer pomiaru", "czas[s]");
+        wskaznik_wykres[1]->przygotowywanie_obiektu("Godzina[h]", "czas[s]");
+        wskaznik_wykres[2]->przygotowywanie_obiektu("Minuta[min]", "czas[s]");
+        wskaznik_wykres[3]->przygotowywanie_obiektu("Sekunda[s]", "czas[s]");
+        wskaznik_wykres[4]->przygotowywanie_obiektu("Jasnosc", "czas[s]");
+        wskaznik_wykres[5]->przygotowywanie_obiektu("Czerwony", "czas[s]");
+        wskaznik_wykres[6]->przygotowywanie_obiektu("Zielony", "czas[s]");
+        wskaznik_wykres[7]->przygotowywanie_obiektu("Niebieski", "czas[s]");
+        wskaznik_wykres[8]->przygotowywanie_obiektu("Odleglosc przeszkoda", "czas[s]");
+        wskaznik_wykres[9]->przygotowywanie_obiektu("Spis dzialajacych", "czas[s]");
+        wskaznik_wykres[10]->przygotowywanie_obiektu("Opis dzialania", "czas[s]");
+        wskaznik_wykres[11]->przygotowywanie_obiektu("RSSI Cansat", "czas[s]");
+        wskaznik_wykres[12]->przygotowywanie_obiektu("Spis dzialajacych stacja", "czas[s]");
+        wskaznik_wykres[13]->przygotowywanie_obiektu("RSSI stacja", "czas[s]");
+        wskaznik_wykres[14]->przygotowywanie_obiektu("Szerokosc geo", "czas[s]");
+        wskaznik_wykres[15]->przygotowywanie_obiektu("Wysokosc geo", "czas[s]");
+        wskaznik_wykres[16]->przygotowywanie_obiektu("Wysokosc gps", "czas[s]");
+        wskaznik_wykres[17]->przygotowywanie_obiektu("Temperatura DS18B20[*C]", "czas[s]");
+        wskaznik_wykres[18]->przygotowywanie_obiektu("Temperatura SHT[*C]", "czas[s]");
+        wskaznik_wykres[19]->przygotowywanie_obiektu("Wilgotnosc[%]", "czas[s]");
+        wskaznik_wykres[20]->przygotowywanie_obiektu("Akceleromatr x", "czas[s]");
+        wskaznik_wykres[21]->przygotowywanie_obiektu("Akceleromatr y", "czas[s]");
+        wskaznik_wykres[22]->przygotowywanie_obiektu("Akceleromatr z", "czas[s]");
+        wskaznik_wykres[23]->przygotowywanie_obiektu("Zyroskop x", "czas[s]");
+        wskaznik_wykres[24]->przygotowywanie_obiektu("Zyroskop y", "czas[s]");
+        wskaznik_wykres[25]->przygotowywanie_obiektu("Zyroskop z", "czas[s]");
+        wskaznik_wykres[26]->przygotowywanie_obiektu("Magnetometr x", "czas[s]");
+        wskaznik_wykres[27]->przygotowywanie_obiektu("Magnetometr y", "czas[s]");
+        wskaznik_wykres[28]->przygotowywanie_obiektu("Magnetometr z", "czas[s]");
+        wskaznik_wykres[29]->przygotowywanie_obiektu("Temperatura altimu[*C]", "czas[s]");
+        wskaznik_wykres[30]->przygotowywanie_obiektu("Cisnienie altimu[hPa]", "czas[s]");
+        wskaznik_wykres[31]->przygotowywanie_obiektu("Wilgotnosc ziemi[%]", "czas[s]");
+        wskaznik_wykres[32]->przygotowywanie_obiektu("Napiecie baterii", "czas[s]");
+        wskaznik_wykres[33]->przygotowywanie_obiektu("Wys geo stacja", "czas[s]");
+        wskaznik_wykres[34]->przygotowywanie_obiektu("Szer geo stacja", "czas[s]");
+        wskaznik_wykres[35]->przygotowywanie_obiektu("Temp altimu stacja[*C]", "czas[s]");
+        wskaznik_wykres[36]->przygotowywanie_obiektu("Cisn altimu stacja[hPa]", "czas[s]");
+        wskaznik_wykres[37]->przygotowywanie_obiektu("Magnetometr stacja x", "czas[s]");
+        wskaznik_wykres[38]->przygotowywanie_obiektu("Magnetometr stacja y", "czas[s]");
+        wskaznik_wykres[39]->przygotowywanie_obiektu("Magnetometr stacja z", "czas[s]");
+        wskaznik_wykres[40]->przygotowywanie_obiektu("Roznica wysokosci[m]", "czas[s]");
+        wskaznik_wykres[41]->przygotowywanie_obiektu("Odleglosc prosta[m]", "czas[s]");
+        wskaznik_wykres[42]->przygotowywanie_obiektu("Odleglosc calkowita[m]", "czas[s]");
+        wskaznik_wykres[43]->przygotowywanie_obiektu("Kat wysokosc", "czas[s]");
+        wskaznik_wykres[44]->przygotowywanie_obiektu("Kat obrot", "czas[s]");
     }
 
     while(true)
     {
-        std::future<bool> odbieranie_sygnalu(std::async(launch::async,odbieranie_danych, &odebrano));
+        if(tabela_COM.zwroc_wybrano_inny_COM() == 1)
+        {
+            tabela_COM.zmiana_COM();
+        }
 
-        while(odebrano == 0)
+        cout<<"Nowy watek"<<endl;
+        std::future<int> odbieranie_sygnalu(std::async(launch::async,odbieranie_danych, &odebrano));
+
+        while(odebrano == 0 || tabela_COM.zwroc_wlaczony_COM() == 0)
         {
             czas_start = clock();
 
-            ruch_myszki = 0;
+            myszka.ruch_myszki = 0;
 
-            rect_myszka.ruch_x = 0;
-            rect_myszka.ruch_y = 0;
+            myszka.ruch_x = 0;
+            myszka.ruch_y = 0;
+            myszka.ruch_scroll = 0;
 
-            {//OBSLUGA WYDARZEN
+            myszka.zmiana_wcisniecia = 0;
+
+            {
+                //OBSLUGA WYDARZEN
                 while(SDL_PollEvent(&wydarzenie))
                 {
                     if(wydarzenie.type == SDL_MOUSEMOTION)
                     {
-                        rect_myszka.ruch_x += wydarzenie.motion.x - rect_myszka.x;
-                        rect_myszka.ruch_y += wydarzenie.motion.y - rect_myszka.y;
-                        rect_myszka.x = wydarzenie.motion.x;
-                        rect_myszka.y = wydarzenie.motion.y;
-                        ruch_myszki = 1;
+                        myszka.ruch_x += wydarzenie.motion.x - myszka.x;
+                        myszka.ruch_y += wydarzenie.motion.y - myszka.y;
+                        myszka.x = wydarzenie.motion.x;
+                        myszka.y = wydarzenie.motion.y;
+                        myszka.ruch_myszki = 1;
                     }
 
                     if(wydarzenie.type == SDL_WINDOWEVENT)
@@ -1990,14 +3895,23 @@ int main(int argc, char *args[])
                     {
                         if(wydarzenie.button.button == SDL_BUTTON_LEFT)
                         {
-                            wcisniety_lewy_przycisk_myszy = 1;
+                            if(myszka.wcisniety_lewy_przycisk_myszy == 0)
+                            {
+                                myszka.zmiana_wcisniecia = 1;
+                            }
+                            myszka.wcisniety_lewy_przycisk_myszy = 1;
                         }
                     }
+
                     if(wydarzenie.type == SDL_MOUSEBUTTONUP)
                     {
                         if(wydarzenie.button.button == SDL_BUTTON_LEFT)
                         {
-                            wcisniety_lewy_przycisk_myszy = 0;
+                            if(myszka.wcisniety_lewy_przycisk_myszy == 1)
+                            {
+                                myszka.zmiana_wcisniecia = 1;
+                            }
+                            myszka.wcisniety_lewy_przycisk_myszy = 0;
                         }
                     }
 
@@ -2007,7 +3921,36 @@ int main(int argc, char *args[])
                         {
                             wcisniety_shift = 1;
                         }
+
+                        if(dane_do_portu.zwroc_aktywne_wpisywanie_klawiatura())
+                        {
+                            switch(wydarzenie.key.keysym.sym)
+                            {
+                            case '0':
+                            case '1':
+                            case '2':
+                            case '3':
+                            case '4':
+                            case '5':
+                            case '6':
+                            case '7':
+                            case '8':
+                            case '9':
+                            case '.':
+                            case ',':
+                            {
+                                dane_do_portu.dopisywanie_znakow_do_wpisywanie_klawiatura(wydarzenie.key.keysym.sym);
+                            }
+                            }
+
+                            if(wydarzenie.key.keysym.sym == SDLK_BACKSPACE)
+                            {
+                                dane_do_portu.usuwanie_ostatniego_znaku_wpisywanie_klawiatura();
+                            }
+                        }
+
                     }
+
                     if(wydarzenie.type == SDL_KEYUP)
                     {
                         if(wydarzenie.key.keysym.sym == SDLK_LSHIFT)
@@ -2015,11 +3958,20 @@ int main(int argc, char *args[])
                             wcisniety_shift = 0;
                         }
                     }
+
+                    if(wydarzenie.type == SDL_MOUSEWHEEL)
+                    {
+                        if(wydarzenie.wheel.y != 0)
+                        {
+                            myszka.ruch_scroll = wydarzenie.wheel.y;
+                        }
+                    }
                 }
             }//KONIEC - OBSLUGA WYDARZEN
 
 
-            {//WYSWIETLANIE OBRAZU
+            {
+                //WYSWIETLANIE OBRAZU
                 SDL_SetRenderDrawColor(ekran, 0, 0, 0, SDL_ALPHA_OPAQUE);
                 SDL_RenderClear(ekran);
 
@@ -2028,125 +3980,215 @@ int main(int argc, char *args[])
                     wskaznik_wykres[i]->wyswietlanie_wykresu();
                 }
 
+                co_robi_cansat.wyswietlanie_co_robi_cansat();
+
                 lista_dzialajacych.wyswietlanie_lista_dzialajacych();
 
                 tabela_COM.wyswietlanie_tabela_COM();
 
-                co_robi_cansat.wyswietlanie_co_robi_cansat();
+                dane_do_portu.wyswietlanie_dane_do_portu();
 
                 SDL_RenderPresent(ekran);
             }//KONIEC - WYSWIETLANIE OBRAZU
 
-            if(ruch_myszki == 1 || wcisniety_shift == 1)
+
             {
-                if(wcisniety_lewy_przycisk_myszy == 0)
+                //OBSLUGA MYSZKI
+                if(myszka.ruch_myszki == 1 || wcisniety_shift == 1)
                 {
-                    myszka_najechala_na_wykres = 0;
-                    myszka_najechala_na_lista_dzialajacych = 0;
-                    myszka_najechala_na_tabela_COM = 0;
-                    myszka_najechala_na_co_robi_cansat = 0;
-
-                    if(wcisniety_shift == 1)
+                    if(myszka.wcisniety_lewy_przycisk_myszy == 0)
                     {
-                        for(int i=0; i<liczba_wykresow; i++)
+                        myszka_najechala_na_cos = 0;
+                        myszka_najechala_na_cos_zmiana_kursora = 0;
+
+                        myszka_najechala_na_wykres = 0;
+                        myszka_najechala_na_lista_dzialajacych = 0;
+                        myszka_najechala_na_tabela_COM = 0;
+                        myszka_najechala_na_co_robi_cansat = 0;
+                        myszka_najechala_na_dane_do_portu = 0;
+                        myszka_najechala_na_wybieranie_scrollem = 0;
+                        myszka_najechala_na_przyciski = 0;
+                        myszka_najechala_na_wpisywanie_klawiatura = 0;
+
+                        if(wcisniety_shift == 1)
                         {
-                            if(myszka_najechala_na_wykres == 0)
+                            for(int i=0; i<liczba_wykresow; i++)
                             {
-                                if(wskaznik_wykres[i]->sprawdzanie_myszka_na_wykresie())
+                                if(myszka_najechala_na_cos == 0)
                                 {
-                                    wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
-                                    wskaznik_funkcji_wykres = &klasa_wykres::przesuwanie_wykresu;
-                                    myszka_najechala_na_wykres = 1;
+                                    if(wskaznik_wykres[i]->sprawdzanie_myszka_na_wykresie())
+                                    {
+                                        wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
+                                        wskaznik_funkcji_wykres = &klasa_wykres::przesuwanie_wykresu;
+                                        myszka_najechala_na_wykres = 1;
+                                        myszka_najechala_na_cos = 1;
+                                        myszka_najechala_na_cos_zmiana_kursora = 1;
+                                    }
+                                }
+                            }
+                            if(myszka_najechala_na_cos == 0)
+                            {
+                                if(lista_dzialajacych.sprawdzanie_myszka_na_lista_dzialajacych())
+                                {
+                                    myszka_najechala_na_lista_dzialajacych = 1;
+                                    myszka_najechala_na_cos = 1;
+                                    myszka_najechala_na_cos_zmiana_kursora = 1;
+                                }
+                            }
+                            if(myszka_najechala_na_cos == 0)
+                            {
+                                if(tabela_COM.sprawdzanie_myszka_na_tabela_COM())
+                                {
+                                    myszka_najechala_na_tabela_COM = 1;
+                                    myszka_najechala_na_cos = 1;
+                                    myszka_najechala_na_cos_zmiana_kursora = 1;
+                                }
+                            }
+                            if(myszka_najechala_na_cos == 0)
+                            {
+                                if(co_robi_cansat.sprawdzanie_myszka_na_co_robi_cansat())
+                                {
+                                    myszka_najechala_na_co_robi_cansat = 1;
+                                    myszka_najechala_na_cos = 1;
+                                    myszka_najechala_na_cos_zmiana_kursora = 1;
+                                }
+                            }
+                            if(myszka_najechala_na_cos == 0)
+                            {
+                                if(dane_do_portu.sprawdzanie_myszka_na_dane_do_portu())
+                                {
+                                    myszka_najechala_na_dane_do_portu = 1;
+                                    myszka_najechala_na_cos = 1;
+                                    myszka_najechala_na_cos_zmiana_kursora = 1;
                                 }
                             }
                         }
-                        if(myszka_najechala_na_wykres == 0)
+                        else //if(wcisniety_shift == 0)
                         {
-                            if(lista_dzialajacych.sprawdzanie_myszka_na_lista_dzialajacych())
+                            //sprawdzanie czy myszka najechala na krawedzie wykresow
+                            for(int i=0; i<liczba_wykresow; i++)
                             {
-                                myszka_najechala_na_lista_dzialajacych = 1;
+                                if(myszka_najechala_na_cos == 0)
+                                {
+                                    if(wskaznik_wykres[i]->sprawdzanie_myszka_na_krawedzi_pionowej())
+                                    {
+                                        wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
+                                        wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_szerokosc_kursor;
+                                        myszka_najechala_na_wykres = 1;
+                                        myszka_najechala_na_cos = 1;
+                                        myszka_najechala_na_cos_zmiana_kursora = 1;
+                                    }
+                                    else if(wskaznik_wykres[i]->sprawdzanie_myszka_na_krawedzi_poziomej())
+                                    {
+                                        wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
+                                        wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_wysokosc_kursor;
+                                        myszka_najechala_na_wykres = 1;
+                                        myszka_najechala_na_cos = 1;
+                                        myszka_najechala_na_cos_zmiana_kursora = 1;
+                                    }
+                                    else if(wskaznik_wykres[i]->sprawdzanie_myszka_na_rogu())
+                                    {
+                                        wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
+                                        wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_wszystko_kursor;
+                                        myszka_najechala_na_wykres = 1;
+                                        myszka_najechala_na_cos = 1;
+                                        myszka_najechala_na_cos_zmiana_kursora = 1;
+                                    }
+                                }
+                            }
+
+                            //sprawdzanie czy myszka najechala na przyciski
+                            if(myszka_najechala_na_cos == 0)
+                            {
+                                if(tabela_COM.sprawdzanie_myszka_na_przyciskach_tabela_COM() || dane_do_portu.sprawdzanie_myszka_na_przyciskach_dane_do_portu())
+                                {
+                                    myszka_najechala_na_przyciski = 1;
+                                    myszka_najechala_na_cos = 1;
+                                    myszka_najechala_na_cos_zmiana_kursora = 1;
+                                }
+                            }
+
+                            //sprawdzanie czy myszka najechala na wybieranie scrollem
+                            if(myszka_najechala_na_cos == 0)
+                            {
+                                if(tabela_COM.sprawdzanie_myszka_na_wybieranie_scrollem_tabela_COM() || dane_do_portu.sprawdzanie_myszka_na_wybieranie_scrollem_dane_do_portu())
+                                {
+                                    myszka_najechala_na_wybieranie_scrollem = 1;
+                                    myszka_najechala_na_cos = 1;
+                                }
+                            }
+
+                            //sprawdzanie czy myszka najechala na wpisywanie klawiatura
+                            if(myszka_najechala_na_cos == 0)
+                            {
+                                if(dane_do_portu.sprawdzanie_myszka_na_wpisywanie_klawiatura_dane_do_portu())
+                                {
+                                    myszka_najechala_na_wpisywanie_klawiatura = 1;
+                                    myszka_najechala_na_cos = 1;
+                                    myszka_najechala_na_cos_zmiana_kursora = 1;
+                                }
                             }
                         }
-                        if(myszka_najechala_na_wykres == 0 && myszka_najechala_na_lista_dzialajacych == 0)
+
+                        //jesli myszka nie najechala na nic - powrot do tradycyjnego kursora
+                        if(myszka_najechala_na_cos_zmiana_kursora == 0)
                         {
-                            if(tabela_COM.sprawdzanie_myszka_na_tabela_COM())
+                            if(aktualny_wyglad_kursora != 0)
                             {
-                                myszka_najechala_na_tabela_COM = 1;
+                                SDL_SetCursor(kursor_tradycyjny);
+                                aktualny_wyglad_kursora = 0;
                             }
-                        }
-                        if(myszka_najechala_na_wykres == 0 && myszka_najechala_na_lista_dzialajacych == 0 && myszka_najechala_na_co_robi_cansat == 0)
-                        {
-                            if(co_robi_cansat.sprawdzanie_myszka_na_co_robi_cansat())
-                            {
-                                myszka_najechala_na_co_robi_cansat = 1;
-                            }
+                            wskaznik_wykres_dostosowywanie = NULL;
                         }
                     }
-                    else
+                    else //jesli jest wcisniety lewy przycisk myszy
                     {
-                        //sprawdzanie czy myszka najechala na krawedzie wykresow
-                        for(int i=0; i<liczba_wykresow; i++)
+                        //wykonuje dostosowywanie odpowiedniej f-cji
+                        if(myszka_najechala_na_wykres == 1)
                         {
-                            if(myszka_najechala_na_wykres == 0)
+                            if(wskaznik_wykres_dostosowywanie != NULL)
                             {
-                                if(wskaznik_wykres[i]->sprawdzanie_myszka_na_krawedzi_pionowej())
-                                {
-                                    wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
-                                    wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_szerokosc_kursor;
-                                    myszka_najechala_na_wykres = 1;
-                                }
-                                else if(wskaznik_wykres[i]->sprawdzanie_myszka_na_krawedzi_poziomej())
-                                {
-                                    wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
-                                    wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_wysokosc_kursor;
-                                    myszka_najechala_na_wykres = 1;
-                                }
-                                else if(wskaznik_wykres[i]->sprawdzanie_myszka_na_rogu())
-                                {
-                                    wskaznik_wykres_dostosowywanie = wskaznik_wykres[i];
-                                    wskaznik_funkcji_wykres = &klasa_wykres::zmiana_wielkosci_wykresu_wszystko_kursor;
-                                    myszka_najechala_na_wykres = 1;
-                                }
+                                (*wskaznik_wykres_dostosowywanie.*wskaznik_funkcji_wykres)();
                             }
                         }
-
-                    }
-
-                    //jesli myszka nie najechala na nic
-                    if(myszka_najechala_na_wykres == 0 && myszka_najechala_na_lista_dzialajacych == 0 && myszka_najechala_na_tabela_COM == 0 && myszka_najechala_na_co_robi_cansat == 0)
-                    {
-                        if(aktualny_wyglad_kursora != 0)
+                        else if(myszka_najechala_na_lista_dzialajacych == 1)
                         {
-                            SDL_SetCursor(kursor_tradycyjny);
-                            aktualny_wyglad_kursora = 0;
+                            lista_dzialajacych.przesuwanie_lista_dzialajacych();
                         }
-                        wskaznik_wykres_dostosowywanie = NULL;
+                        else if(myszka_najechala_na_tabela_COM == 1)
+                        {
+                            tabela_COM.przesuwanie_tabela_COM();
+                        }
+                        else if(myszka_najechala_na_co_robi_cansat == 1)
+                        {
+                            co_robi_cansat.przesuwanie_co_robi_CanSat();
+                        }
+                        else if(myszka_najechala_na_dane_do_portu == 1)
+                        {
+                            dane_do_portu.przesuwanie_dane_do_portu();
+                        }
                     }
                 }
-                else //jesli jest wcisniety lewy przycisk myszy
+
+                if(myszka_najechala_na_wybieranie_scrollem)
                 {
-                    //wykonuje dostosowywanie odpowiedniej f-cji
-                    if(myszka_najechala_na_wykres == 1)
-                    {
-                        if(wskaznik_wykres_dostosowywanie != NULL)
-                        {
-                            (*wskaznik_wykres_dostosowywanie.*wskaznik_funkcji_wykres)();
-                        }
-                    }
-                    else if(myszka_najechala_na_lista_dzialajacych == 1)
-                    {
-                        lista_dzialajacych.przesuwanie_lista_dzialajacych();
-                    }
-                    else if(myszka_najechala_na_tabela_COM == 1)
-                    {
-                        tabela_COM.przesuwanie_tabela_COM();
-                    }
-                    else if(myszka_najechala_na_co_robi_cansat == 1)
-                    {
-                        co_robi_cansat.przesuwanie_co_robi_CanSat();
-                    }
+                    tabela_COM.obsluga_wybieranie_scrollem();
+                    dane_do_portu.obsluga_wybieranie_scrollem();
                 }
-            }
+
+                if(myszka.zmiana_wcisniecia == 1 && myszka.wcisniety_lewy_przycisk_myszy == 1)
+                {
+                    if(myszka_najechala_na_przyciski)
+                    {
+                        tabela_COM.obsluga_przyciskow();
+                        dane_do_portu.obsluga_przyciskow();
+                    }
+
+                    dane_do_portu.obsluga_wpisywanie_klawiatura();
+                }
+
+            }//KONIEC - OBSLUGA MYSZKI
+
 
             czas_stop = clock();
             if(czas_stop - czas_start < 30)
@@ -2155,18 +4197,36 @@ int main(int argc, char *args[])
             }
             else
             {
-                cout<<"nie daje rady"<<endl;
+                cout<<"nie daje rady: "<<czas_stop - czas_start<<endl;
             }
         }//koniec "while(odebrano == 0)"
 
         odebrano = 0;
-        if(odbieranie_sygnalu.get() == 1)
+        cout<<"Odebrano dane"<<endl;
+        int odbieranie_danych_zwrot = odbieranie_sygnalu.get();
+        if(odbieranie_danych_zwrot == 1)
         {
-            wysylanie_danych("Test 48_,");
-            dopisywanie_do_wykresow(wskaznik_wykres);
+            cout<<"Odebrano dane - prawidlowe - koniec"<<endl;
+            dane_do_portu.wysylanie_danych();
+            dopisywanie_do_wykresow();
+            zapisywanie_do_pliku.zapis();
+            tabela_COM.ustaw_znalezione_COM(1);
             lista_dzialajacych.aktualizacja_dzialajacych(spis_dzialajacych);
+            co_robi_cansat.ustaw_znaleziony_sygnal(1);
         }
-
+        else if(odbieranie_danych_zwrot == 2)
+        {
+            cout<<"Brak sygnalu CanSata - koniec"<<endl;
+            dane_do_portu.wysylanie_danych();
+            tabela_COM.ustaw_znalezione_COM(1);
+            co_robi_cansat.ustaw_znaleziony_sygnal(0);
+        }
+        else
+        {
+            cout<<"Error port szeregowy - koniec"<<endl;
+            tabela_COM.ustaw_znalezione_COM(0);
+            co_robi_cansat.ustaw_znaleziony_sygnal(0);
+        }
 
     }//koniec "while(true)"
 
