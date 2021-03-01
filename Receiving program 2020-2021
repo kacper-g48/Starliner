@@ -8,22 +8,71 @@
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
+//LoRa Radio
+/*
+  VCC - 3.3V
+  GND - GND
+  MOSI - MOSI
+  MISO - MISO
+  CLK - SCK
+  CS - pin 8
+  RST - pin 4
+  INT - pin 3
+*/
+
+//SD Card
+/*
+  wszystkie piny z jednej linii
+  GND - GND
+  VDD - 3.3V
+  DI - MOSI
+  DO - MISO
+  SCLK - SCK
+  CS - pin 12
+*/
+
+//GPS
+/*
+  VCC - 3.3V
+  GND - GND
+  TX - RX
+  RX - TX
+*/
+
+//Altimu
+/*
+  VIN - 3.3V
+  GND - GND
+  SCL - SCL
+  SDA - SDA
+*/
+
+//sterownik - silnik wysokosc (gora-dol)
+/*
+  dir_pin - 10
+  step_pin - 11
+*/
+
+//sterownik - silnik obrot
+/*
+  dir_pin - 6
+  step_pin - 9
+*/
+
+
 bool znalezione_GPS_stacja = 0;
 bool znalezione_altimu_zyro_akce_stacja = 0;
 bool znalezione_altimu_magnetometr_stacja = 0;
 bool znalezione_altimu_temp_cisn_stacja = 0;
 bool znalezione_nadajnik_stacja = 0;
 
+bool wolne_wysylanie = 0;
 
 double lokalizacja_stacja[2] = {0.0, 0.0};
 char lokalizacja_znak_stacja[2] = {' ', ' '};
 double temperatura_altimu_stacja = 0;
 double cisnienie_altimu_stacja = 0;
-double roznica_wysokosci = 0;
-double odleglosc_prosta = 0;
-double odleglosc_calkowita = 0;
-double kat_wysokosc = 0;
-double kat_obrot = 0;
+double magnetometr_stacja[3] = {0.0, 0.0, 0.0};
 
 int spis_dzialajacych_stacja = 0;
 int RSSI_stacja = 0;
@@ -183,30 +232,14 @@ void przesylanie_do_komputera(uint8_t buf[RH_RF95_MAX_MESSAGE_LEN])
   double_to_char_100(cisnienie_altimu_stacja, cisnienie_altimu_stacja_100, 2, liczba_cyfr_100_cisnienie_altimu_stacja);
   liczba_dopisanych_znakow += liczba_cyfr_100_cisnienie_altimu_stacja + 1;
 
-  char roznica_wysokosci_100[7];
-  int liczba_cyfr_100_roznica_wysokosci;
-  double_to_char_100(roznica_wysokosci, roznica_wysokosci_100, 2, liczba_cyfr_100_roznica_wysokosci);
-  liczba_dopisanych_znakow += liczba_cyfr_100_roznica_wysokosci + 1;
-  
-  char odleglosc_prosta_100[7];
-  int liczba_cyfr_100_odleglosc_prosta;
-  double_to_char_100(odleglosc_prosta, odleglosc_prosta_100, 2, liczba_cyfr_100_odleglosc_prosta);
-  liczba_dopisanych_znakow += liczba_cyfr_100_odleglosc_prosta + 1;
-  
-  char odleglosc_calkowita_100[7];
-  int liczba_cyfr_100_odleglosc_calkowita;
-  double_to_char_100(odleglosc_calkowita, odleglosc_calkowita_100, 2, liczba_cyfr_100_odleglosc_calkowita);
-  liczba_dopisanych_znakow += liczba_cyfr_100_odleglosc_calkowita + 1;
-
-  char kat_wysokosc_100[7];
-  int liczba_cyfr_100_kat_wysokosc;
-  double_to_char_100(kat_wysokosc, kat_wysokosc_100, 2, liczba_cyfr_100_kat_wysokosc);
-  liczba_dopisanych_znakow += liczba_cyfr_100_kat_wysokosc + 1;
-
-  char kat_obrot_100[7];
-  int liczba_cyfr_100_kat_obrot;
-  double_to_char_100(kat_obrot, kat_obrot_100, 2, liczba_cyfr_100_kat_obrot);
-  liczba_dopisanych_znakow += liczba_cyfr_100_kat_obrot + 1;
+  char magnetometr_stacja_100[3][7];
+  int liczba_cyfr_100_magnetometr_stacja[3];
+  double_to_char_100(magnetometr_stacja[0], magnetometr_stacja_100[0], 2, liczba_cyfr_100_magnetometr_stacja[0]);
+  double_to_char_100(magnetometr_stacja[1], magnetometr_stacja_100[1], 2, liczba_cyfr_100_magnetometr_stacja[1]);
+  double_to_char_100(magnetometr_stacja[2], magnetometr_stacja_100[2], 2, liczba_cyfr_100_magnetometr_stacja[2]);
+  liczba_dopisanych_znakow += liczba_cyfr_100_magnetometr_stacja[0] + 1;
+  liczba_dopisanych_znakow += liczba_cyfr_100_magnetometr_stacja[1] + 1;
+  liczba_dopisanych_znakow += liczba_cyfr_100_magnetometr_stacja[2] + 1;
 
   char spis_dzialajacych_stacja_100[7];
   int liczba_cyfr_100_spis_dzialajacych_stacja;
@@ -251,11 +284,9 @@ void przesylanie_do_komputera(uint8_t buf[RH_RF95_MAX_MESSAGE_LEN])
   dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_stacja_100[1], liczba_cyfr_100_lokalizacja_stacja[1], nr_znaku, 2);
   dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_altimu_stacja_100, liczba_cyfr_100_temperatura_altimu_stacja, nr_znaku, ujemna_sprawdz(temperatura_altimu_stacja));
   dopisywanie_gotowy_tekst(gotowy_tekst, cisnienie_altimu_stacja_100, liczba_cyfr_100_cisnienie_altimu_stacja, nr_znaku, ujemna_sprawdz(cisnienie_altimu_stacja));
-  dopisywanie_gotowy_tekst(gotowy_tekst, roznica_wysokosci_100, liczba_cyfr_100_roznica_wysokosci, nr_znaku, ujemna_sprawdz(roznica_wysokosci));
-  dopisywanie_gotowy_tekst(gotowy_tekst, odleglosc_prosta_100, liczba_cyfr_100_odleglosc_prosta, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, odleglosc_calkowita_100, liczba_cyfr_100_odleglosc_calkowita, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, kat_wysokosc_100, liczba_cyfr_100_kat_wysokosc, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, kat_obrot_100, liczba_cyfr_100_kat_obrot, nr_znaku, 0);
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_stacja_100[0], liczba_cyfr_100_magnetometr_stacja[0], nr_znaku, ujemna_sprawdz(magnetometr_stacja[0]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_stacja_100[1], liczba_cyfr_100_magnetometr_stacja[1], nr_znaku, ujemna_sprawdz(magnetometr_stacja[1]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_stacja_100[2], liczba_cyfr_100_magnetometr_stacja[2], nr_znaku, ujemna_sprawdz(magnetometr_stacja[2]));
   dopisywanie_gotowy_tekst(gotowy_tekst, spis_dzialajacych_stacja_100, liczba_cyfr_100_spis_dzialajacych_stacja, nr_znaku, 0);
   dopisywanie_gotowy_tekst(gotowy_tekst, RSSI_stacja_100, liczba_cyfr_100_RSSI_stacja, nr_znaku, ujemna_sprawdz(RSSI_stacja));
   
@@ -302,7 +333,7 @@ void przesylanie_do_komputera(uint8_t buf[RH_RF95_MAX_MESSAGE_LEN])
   liczba_znakow_char[8] = tablica_znakow[liczba];
   
   Serial.println(liczba_znakow_char);
-  delay(5);
+  delay(50);
   Serial.println(gotowy_tekst);
 }
 
@@ -340,59 +371,110 @@ void setup()
 
 void loop()
 {
-  if (rf95.available())
+  if (rf95.waitAvailableTimeout(1500))
   {
     uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
     uint8_t len = sizeof(buf);
 
     if (rf95.recv(buf, &len))
     {
-      digitalWrite(13, HIGH);
+      //digitalWrite(13, HIGH);
 
-      roznica_wysokosci = 0;
-      odleglosc_prosta = 0;
-      odleglosc_calkowita = 0;
-      kat_wysokosc = 0;
-      kat_obrot = 0;
       lokalizacja_stacja[0] = 0;
       lokalizacja_stacja[1] = 0;
       lokalizacja_znak_stacja[0] = ' ';
       lokalizacja_znak_stacja[1] = ' ';
       temperatura_altimu_stacja = 0;
       cisnienie_altimu_stacja = 0;
+      magnetometr_stacja[0] = 0;
+      magnetometr_stacja[1] = 0;
+      magnetometr_stacja[2] = 0;
 
       RSSI_stacja = rf95.lastRssi();
 
       przesylanie_do_komputera(buf);
 
-      char tekst_do_odeslania_do_cansata[10];
+      char wiadomosc_z_komputera[12];
+      char wiadomosc_do_odeslania[10];
       int licznik_znaku = 0;
       int czas_rozpoczecie_czekania = millis();
 
-      while(millis()-czas_rozpoczecie_czekania < 100 && licznik_znaku != 9)
+      while(millis()-czas_rozpoczecie_czekania < 100 && licznik_znaku != 11)
       {
         while(Serial.available() > 0)
         {
-          tekst_do_odeslania_do_cansata[licznik_znaku] = Serial.read();
+          wiadomosc_z_komputera[licznik_znaku] = Serial.read();
           licznik_znaku++;
         }
       }
 
-      if(licznik_znaku == 9)
+      if(licznik_znaku == 11)
       {
-        delay(100);
-        tekst_do_odeslania_do_cansata[9] = '\0';
+        digitalWrite(13, HIGH);
+        for(int i=0; i<10; i++)
+        {
+          wiadomosc_do_odeslania[i] = wiadomosc_z_komputera[i+2];
+        }
 
-        rf95.send((uint8_t *)tekst_do_odeslania_do_cansata, 10);
+        rf95.send((uint8_t *)wiadomosc_do_odeslania, 10);
         rf95.waitPacketSent();
+        digitalWrite(13, LOW);
       }
       
-
-      digitalWrite(13, LOW);
+      //digitalWrite(13, LOW);
     }
     else
     {
       ;
+    }
+  }
+  else
+  {
+    uint8_t buf[4];
+    buf[0] = 15;
+    buf[1] = 15;
+    buf[2] = 15;
+    buf[3] = '\0';
+
+    lokalizacja_stacja[0] = 0;
+    lokalizacja_stacja[1] = 0;
+    lokalizacja_znak_stacja[0] = ' ';
+    lokalizacja_znak_stacja[1] = ' ';
+    temperatura_altimu_stacja = 0;
+    cisnienie_altimu_stacja = 0;
+    magnetometr_stacja[0] = 0;
+    magnetometr_stacja[1] = 0;
+    magnetometr_stacja[2] = 0;
+
+    RSSI_stacja = 0;
+
+    przesylanie_do_komputera(buf);
+
+    char wiadomosc_z_komputera[12];
+    char wiadomosc_do_odeslania[10];
+    int licznik_znaku = 0;
+    int czas_rozpoczecie_czekania = millis();
+
+    while(millis()-czas_rozpoczecie_czekania < 100 && licznik_znaku != 11)
+    {
+      while(Serial.available() > 0)
+      {
+        wiadomosc_z_komputera[licznik_znaku] = Serial.read();
+        licznik_znaku++;
+      }
+    }
+
+    if(licznik_znaku == 11)
+    {
+      digitalWrite(13, HIGH);
+      for(int i=0; i<10; i++)
+      {
+        wiadomosc_do_odeslania[i] = wiadomosc_z_komputera[i+2];
+      }
+
+      rf95.send((uint8_t *)wiadomosc_do_odeslania, 10);
+      rf95.waitPacketSent();
+      digitalWrite(13, LOW);
     }
   }
 }
