@@ -18,12 +18,17 @@
 
 #include <Adafruit_GPS.h> //biblioteka gps
 
+#include <SparkFun_APDS9960.h> //biblioteka czujnik kolorow i odleglosci przeszkody
+
 #include <math.h>
 
 #define GPSSerial Serial1
 
 Adafruit_GPS GPS(&GPSSerial); //stworzenie obiektu GPS
 
+SparkFun_APDS9960 apds = SparkFun_APDS9960(); // stworzenie obiektu czujnika kolorow i odleglosci przeszkody
+
+bool znalezione_czujnik_kolorow = 0;
 bool znalezione_SD = 0;
 bool znalezione_SHT = 0;
 bool znalezione_DS18B20 = 0;
@@ -34,9 +39,17 @@ bool znalezione_altimu_temp_cisn = 0;
 bool znalezione_wilgotnosc_ziemi = 0;
 bool znalezione_nadajnik = 0;
 
+int mode = 0;
+double cisnienie_na_ziemi = 1028.0;
+double cisnienie_granica_ziemi = 7;
+int timer_wzlatywanie = 0;
+int timer_opadanie = 0;
+double poprzednie_cisnienie = 0;
+
 double temperatura_SHT = 0;
 double wilgotnosc = 0;
 double temperatura_DS18B20 = 0;
+int numer_pomiaru = 0;
 int godzina = 0;
 int minuta = 0;
 int sekunda = 0;
@@ -57,12 +70,16 @@ double magnetometr[3] = {0, 0, 0};
 double temperatura_altimu = 0;
 double cisnienie_altimu = 0;
 double wilgotnosc_ziemi = 0;
+int kolor_jasnosc = 0;
+int kolor_czerwony = 0;
+int kolor_niebieski = 0;
+int kolor_zielony = 0;
+int odleglosc_przeszkoda = 0;
 
 int spis_dzialajacych = 0;
 double napiecie_baterii = 0;
 int RSSI_cansat = 0;
 int opis_dzialania = 0;
-
 
 int pin_cs_nadajnik = 8;
 int pin_RST_nadajnik = 4;
@@ -71,7 +88,7 @@ int pin_INT_nadajnik = 3;
 
 RH_RF95 rf95(pin_cs_nadajnik, pin_INT_nadajnik);
 
-int pin_cs_SD = 12;
+int pin_cs_SD = 5;
 
 OneWire  ds18b20(6);
 
@@ -109,7 +126,7 @@ uint32_t koniec;
   DI - MOSI
   DO - MISO
   SCLK - SCK
-  CS - pin 12
+  CS - pin 5
 */
 
 //LoRa Radio
@@ -189,10 +206,10 @@ uint32_t koniec;
   MA2 - SILNIK - (PRAWY)
 */
 
-//Silnik - wysuwanie czujnika wilgotnosci
+//Silnik - wysuwanie czujnika wilgotnosci i odczepianie spadochronu
 /*
   IA1 - A4 (SZYBKOSC)
-  IA2 - 11 (KIERUNEK)
+  IA2 - 12 (KIERUNEK)
   VCC - 3.3V
   GND - GND
   --------------------------
@@ -201,6 +218,205 @@ uint32_t koniec;
   MA1 - SILNIK +
   MA2 - SILNIK -
 */
+
+const int IA1 = A1;  //prawy - szybkosc
+const int IA2 = 9; //prawy - kierunek
+const int IB1 = A2; //lewy - szybkosc
+const int IB2 = 10; //lewy - kierunek
+
+const int IA1_wysuwanie = A3;
+const int IA2_wysuwanie = 11;
+
+int aktualna_predkosc_prawe = 0;
+int aktualna_predkosc_lewe = 0;
+
+int aktualna_predkosc_wysuwania = 0;
+
+void ruch_do_przodu()
+{
+  if(aktualna_predkosc_prawe == 0 && aktualna_predkosc_lewe == 0)
+  {
+    digitalWrite(IA2, LOW);
+    digitalWrite(IB2, LOW);
+    for (int i = 0; i <= 200; i += 20)
+    {
+     analogWrite(IA1, i);
+     analogWrite(IB1, i);
+     delay(80);
+    }
+    aktualna_predkosc_prawe = 200;
+    aktualna_predkosc_lewe = 200;
+  }
+}
+
+void ruch_zatrzymaj()
+{
+  if(aktualna_predkosc_prawe == 200 && aktualna_predkosc_lewe == 200)
+  {
+    for (int i = 200; i >= 0; i -= 20)
+    {
+     analogWrite(IA1, i);
+     analogWrite(IB1, i);
+     delay(80);
+    }
+    aktualna_predkosc_prawe = 0;
+    aktualna_predkosc_lewe = 0;
+  }
+  else if(aktualna_predkosc_prawe == -200 && aktualna_predkosc_lewe == -200)
+  {
+    for (int i = 55; i <= 255; i += 20)
+    {
+     analogWrite(IA1, i);
+     analogWrite(IB1, i);
+     delay(80);
+    }
+    aktualna_predkosc_prawe = 0;
+    aktualna_predkosc_lewe = 0;
+  }
+
+  analogWrite(IB1, 0);
+  digitalWrite(IB2, LOW);
+  analogWrite(IA1, 0);
+  digitalWrite(IA2, LOW);
+}
+
+void ruch_skrec_w_prawo()
+{
+  if(aktualna_predkosc_prawe == 0 && aktualna_predkosc_lewe == 0)
+  {
+    digitalWrite(IA2, HIGH);
+    analogWrite(IA1, 255);
+    digitalWrite(IB2, LOW);
+    for(int i=0; i<=200; i+=20)
+    {
+      analogWrite(IA1, 255-i);
+      analogWrite(IB1, i);
+      delay(80);
+    }
+    delay(3000);
+    for(int i=200; i>=0; i-=20)
+    {
+      analogWrite(IA1, 255-i);
+      analogWrite(IB1, i);
+      delay(80);
+    }
+    analogWrite(IB1, 0);
+    digitalWrite(IB2, LOW);
+    analogWrite(IA1, 0);
+    digitalWrite(IA2, LOW);
+  }
+}
+
+void ruch_skrec_w_lewo()
+{
+  if(aktualna_predkosc_prawe == 0 && aktualna_predkosc_lewe == 0)
+  {
+    digitalWrite(IB2, HIGH);
+    analogWrite(IB1, 255);
+    digitalWrite(IA2, LOW);
+    for(int i=0; i<=200; i+=20)
+    {
+      analogWrite(IB1, 255-i);
+      analogWrite(IA1, i);
+      delay(80);
+    }
+    delay(3000);
+    for(int i=200; i>=0; i-=20)
+    {
+      analogWrite(IB1, 255-i);
+      analogWrite(IA1, i);
+      delay(80);
+    }
+    analogWrite(IB1, 0);
+    digitalWrite(IB2, LOW);
+    analogWrite(IA1, 0);
+    digitalWrite(IA2, LOW);
+  }
+}
+
+void ruch_do_tylu()
+{
+  if(aktualna_predkosc_prawe == 0 && aktualna_predkosc_lewe == 0)
+  {
+    digitalWrite(IB2, HIGH);
+    analogWrite(IB1, 255);
+    digitalWrite(IA2, HIGH);
+    analogWrite(IA1, 255);
+
+    for (int i = 255; i >= 55; i -= 20)
+    {
+     analogWrite(IA1, i);
+     analogWrite(IB1, i);
+     delay(80);
+    }
+    aktualna_predkosc_prawe = -200;
+    aktualna_predkosc_lewe = -200;
+  }
+}
+
+void wysuwanie_kol()
+{
+  if(aktualna_predkosc_wysuwania == 0)
+  {
+    digitalWrite(IA2_wysuwanie, HIGH);
+    analogWrite(IA1_wysuwanie, 255);
+
+    for (int i = 255; i >= 55; i -= 20)
+    {
+     analogWrite(IA1_wysuwanie, i);
+     delay(80);
+    }
+    analogWrite(IA1_wysuwanie, 0);
+    aktualna_predkosc_wysuwania = -200;
+  }
+}
+
+void wsuwanie_kol()
+{
+  if(aktualna_predkosc_wysuwania == 0)
+  {
+    digitalWrite(IA2_wysuwanie, LOW);
+    for (int i = 0; i <= 200; i += 20)
+    {
+     analogWrite(IA1_wysuwanie, i);
+     delay(80);
+    }
+    analogWrite(IA1_wysuwanie, 255);
+    aktualna_predkosc_wysuwania = 200;
+  }
+}
+
+void zatrzymanie_wysuwania()
+{
+  if(aktualna_predkosc_wysuwania == 200)
+  {
+    for (int i = 200; i >= 0; i -= 20)
+    {
+     analogWrite(IA1_wysuwanie, i);
+     delay(80);
+    }
+    aktualna_predkosc_wysuwania = 0;
+  }
+  else if(aktualna_predkosc_wysuwania == -200)
+  {
+    for (int i = 55; i <= 255; i += 20)
+    {
+     analogWrite(IA1_wysuwanie, i);
+     delay(80);
+    }
+    aktualna_predkosc_wysuwania = 0;
+  }
+
+  analogWrite(IA1_wysuwanie, 0);
+  digitalWrite(IA2_wysuwanie, LOW);
+}
+
+void wysuwanie_podwozia()
+{
+  wysuwanie_kol();
+  delay(30000);
+  digitalWrite(IA2_wysuwanie, LOW);
+}
 
 int potega(int liczba, int potega)
 {
@@ -264,8 +480,6 @@ void int_to_char_100(int liczba, char tekst[], int &liczba_cyfr_100)
   int cyfra_100;
   int licznik = 0;
 
-
-
   for (int i = potega(100, liczba_cyfr_100 - 1); i >= 1; i /= 100)
   {
     cyfra_100 = liczba / i;
@@ -276,24 +490,23 @@ void int_to_char_100(int liczba, char tekst[], int &liczba_cyfr_100)
   tekst[licznik] = '\0';
 }
 
-void zaokraglij(int &liczba)
+void zaokraglij(double &liczba, int liczba_miejsc_po_przecinku)
 {
-  if (liczba % 10 < 5)
+  int liczba_int = liczba * potega(10, liczba_miejsc_po_przecinku + 1);
+
+  if (liczba_int % 10 >= 5)
   {
-    return;
+    liczba_int += 10;
   }
-  else
-  {
-    liczba += 10;
-  }
+
+  liczba_int /= 10;
+
+  liczba = double(liczba_int) / potega(10, liczba_miejsc_po_przecinku);
 }
 
 void double_to_char_100(double liczba, char tekst[], int liczba_miejsc_po_przecinku, int &liczba_cyfr_100)
 {
-  liczba *= potega(10, liczba_miejsc_po_przecinku + 1);
-  int liczba_int = liczba;
-  zaokraglij(liczba_int);
-  liczba_int /= 10;
+  int liczba_int = liczba * potega(10, liczba_miejsc_po_przecinku);
   int_to_char_100(liczba_int, tekst, liczba_cyfr_100);
 }
 
@@ -322,6 +535,7 @@ void dopisywanie_gotowy_tekst(char gotowy_tekst[], char tekst[], int liczba_cyfr
 
 void tworzenie_spisu_dzialajacych()
 {
+  spis_dzialajacych += (znalezione_czujnik_kolorow ? 1 : 0) * 512;
   spis_dzialajacych += (znalezione_SD ? 1 : 0) * 256;
   spis_dzialajacych += (znalezione_SHT ? 1 : 0) * 128;
   spis_dzialajacych += (znalezione_DS18B20 ? 1 : 0) * 64;
@@ -333,6 +547,44 @@ void tworzenie_spisu_dzialajacych()
   spis_dzialajacych += (znalezione_nadajnik ? 1 : 0) * 1;
 }
 
+void odczytywanie_czujnik_kolorow()
+{
+  uint16_t ambient_light = 0;
+  uint16_t red_light = 0;
+  uint16_t green_light = 0;
+  uint16_t blue_light = 0;
+  
+  if (  !apds.readAmbientLight(ambient_light) ||
+        !apds.readRedLight(red_light) ||
+        !apds.readGreenLight(green_light) ||
+        !apds.readBlueLight(blue_light) ) 
+  {
+    znalezione_czujnik_kolorow = 0;
+  }
+  else
+  {
+    kolor_jasnosc = ambient_light;
+    kolor_czerwony = red_light;
+    kolor_zielony = green_light;
+    kolor_niebieski = blue_light;
+    znalezione_czujnik_kolorow = 1;
+  }
+}
+
+void odczytywanie_czujnik_odleglosci()
+{
+  uint8_t proximity_data = 0;
+  if ( !apds.readProximity(proximity_data) ) 
+  {
+    znalezione_czujnik_kolorow = 0;
+  } 
+  else 
+  {
+    odleglosc_przeszkoda = proximity_data;
+    znalezione_czujnik_kolorow = 1;
+  }
+}
+
 void mierzenie_napiecia_baterii()
 {
   napiecie_baterii = analogRead(A7) * 6.6 / 1024;
@@ -341,7 +593,7 @@ void mierzenie_napiecia_baterii()
 void odczytywanie_SHT()
 {
   DFRobot_SHT3x::sRHAndTemp_t data = sht3x.readTemperatureAndHumidity(sht3x.eRepeatability_High);
-  if(data.ERR == 0)
+  if (data.ERR == 0)
   {
     temperatura_SHT = data.TemperatureC;
     wilgotnosc = data.Humidity;
@@ -355,85 +607,130 @@ void odczytywanie_SHT()
 
 void odczytywanie_wilgotnosc_ziemi()
 {
-  znalezione_wilgotnosc_ziemi = 0;
+  ;//znalezione_wilgotnosc_ziemi = 0;
+}
+
+void algorytm_rozpoznanie_upadku()
+{
+  if (timer_wzlatywanie < 5)
+  {
+    wilgotnosc_ziemi = 1;
+    if (cisnienie_altimu < cisnienie_na_ziemi - cisnienie_granica_ziemi)
+    {
+      timer_wzlatywanie++;
+    }
+    else
+    {
+      timer_wzlatywanie = 0;
+    }
+  }
+
+  if (timer_wzlatywanie >= 5 && timer_opadanie < 10)
+  {
+    wilgotnosc_ziemi = 2;
+    if (cisnienie_altimu > cisnienie_na_ziemi - cisnienie_granica_ziemi)
+    {
+      if (cisnienie_altimu - poprzednie_cisnienie <= 0.25 && cisnienie_altimu - poprzednie_cisnienie >= -0.25)
+      {
+        timer_opadanie++;
+      }
+      else
+      {
+        poprzednie_cisnienie = cisnienie_altimu;
+        timer_opadanie = 0;
+      }
+    }
+  }
+
+  if (timer_opadanie >= 10)
+  {
+    wilgotnosc_ziemi = 3;
+    mode = 1;
+    rf95.ustaw_wysylanie_wolne();
+    //odczytywanie_wilgotnosc_ziemi();
+    //wysuwanie_podwozia();
+  }
 }
 
 void zapisywanie_SD()
 {
-  digitalWrite(pin_cs_SD, LOW);
-  plik = SD.open("test.txt", FILE_WRITE);
-  if (plik)
+  if(znalezione_SD == 1)
   {
-    znalezione_SD = 1;
-    Serial.println("Zapis SD");
-    plik.print(temperatura_SHT);
-    plik.print(";");
-    plik.print(wilgotnosc);
-    plik.print(";");
-    plik.print(temperatura_DS18B20);
-    plik.print(";");
-    plik.print(godzina);
-    plik.print(";");
-    plik.print(minuta);
-    plik.print(";");
-    plik.print(sekunda);
-    plik.print(";");
-    plik.print(dzien);
-    plik.print(".");
-    plik.print(miesiac);
-    plik.print(".");
-    plik.print(rok);
-    plik.print(";");
-    plik.print(lokalizacja[0], 4);
-    plik.print(";");
-    plik.print(lokalizacja_znak[0]);
-    plik.print(";");
-    plik.print(lokalizacja[1], 4);
-    plik.print(";");
-    plik.print(lokalizacja_znak[1]);
-    plik.print(";");
-    plik.print(szybkosc_wezly);
-    plik.print(";");
-    plik.print(kat);
-    plik.print(";");
-    plik.print(wysokosc);
-    plik.print(";");
-    plik.print(liczba_satelit);
-    plik.print(";");
-    plik.print(akcelerometr[0]);
-    plik.print(";");
-    plik.print(akcelerometr[1]);
-    plik.print(";");
-    plik.print(akcelerometr[2]);
-    plik.print(";");
-    plik.print(zyroskop[0]);
-    plik.print(";");
-    plik.print(zyroskop[1]);
-    plik.print(";");
-    plik.print(zyroskop[2]);
-    plik.print(";");
-    plik.print(magnetometr[0]);
-    plik.print(";");
-    plik.print(magnetometr[1]);
-    plik.print(";");
-    plik.print(magnetometr[2]);
-    plik.print(";");
-    plik.print(temperatura_altimu);
-    plik.print(";");
-    plik.print(cisnienie_altimu);
-    plik.print(";");
-    plik.print(spis_dzialajacych);
-    plik.print(";");
-    plik.println(napiecie_baterii);
+    digitalWrite(pin_cs_SD, LOW);
+    plik = SD.open("test.txt", FILE_WRITE);
+    if (plik)
+    {
+      znalezione_SD = 1;
+      Serial.println("Zapis SD");
+      plik.print(temperatura_SHT);
+      plik.print(";");
+      plik.print(wilgotnosc);
+      plik.print(";");
+      plik.print(temperatura_DS18B20);
+      plik.print(";");
+      plik.print(godzina);
+      plik.print(";");
+      plik.print(minuta);
+      plik.print(";");
+      plik.print(sekunda);
+      plik.print(";");
+      plik.print(dzien);
+      plik.print(".");
+      plik.print(miesiac);
+      plik.print(".");
+      plik.print(rok);
+      plik.print(";");
+      plik.print(lokalizacja[0], 4);
+      plik.print(";");
+      plik.print(lokalizacja_znak[0]);
+      plik.print(";");
+      plik.print(lokalizacja[1], 4);
+      plik.print(";");
+      plik.print(lokalizacja_znak[1]);
+      plik.print(";");
+      plik.print(szybkosc_wezly);
+      plik.print(";");
+      plik.print(kat);
+      plik.print(";");
+      plik.print(wysokosc);
+      plik.print(";");
+      plik.print(liczba_satelit);
+      plik.print(";");
+      plik.print(akcelerometr[0]);
+      plik.print(";");
+      plik.print(akcelerometr[1]);
+      plik.print(";");
+      plik.print(akcelerometr[2]);
+      plik.print(";");
+      plik.print(zyroskop[0]);
+      plik.print(";");
+      plik.print(zyroskop[1]);
+      plik.print(";");
+      plik.print(zyroskop[2]);
+      plik.print(";");
+      plik.print(magnetometr[0]);
+      plik.print(";");
+      plik.print(magnetometr[1]);
+      plik.print(";");
+      plik.print(magnetometr[2]);
+      plik.print(";");
+      plik.print(temperatura_altimu);
+      plik.print(";");
+      plik.print(cisnienie_altimu);
+      plik.print(";");
+      plik.print(spis_dzialajacych);
+      plik.print(";");
+      plik.println(napiecie_baterii);
+    }
+    else
+    {
+      Serial.println("Nie mozna otworzyc pliku na karcie SD");
+      znalezione_SD = 0;
+    }
+  
+    plik.close();
+    digitalWrite(pin_cs_SD, HIGH);
   }
-  else
-  {
-    Serial.println("Nie mozna otworzyc pliku na karcie SD");
-    znalezione_SD = 0;
-  }
-
-  plik.close();
-  digitalWrite(pin_cs_SD, HIGH);
 }
 
 void odczytywanie_DS18B20()
@@ -647,204 +944,395 @@ void wyswietlanie()
   Serial.print(spis_dzialajacych);
   Serial.print(" Stan baterii: ");
   Serial.println(napiecie_baterii);
+  Serial.print("Jasnosc: ");
+  Serial.print(kolor_jasnosc);
+  Serial.print(" Czerwony: ");
+  Serial.print(kolor_czerwony);
+  Serial.print(" Zielony: ");
+  Serial.print(kolor_zielony);
+  Serial.print(" Niebieski: ");
+  Serial.print(kolor_niebieski);
+  Serial.print(" Odleglosc przeszkoda: ");
+  Serial.println(odleglosc_przeszkoda);
 }
 
 void wysylanie()
 {
-  digitalWrite(pin_cs_nadajnik, LOW);
-
-  int dlugosc_gotowego_tekstu = 0;
-
-  char godzina_100[5];
-  int liczba_cyfr_100_godzina;
-  int_to_char_100(godzina, godzina_100, liczba_cyfr_100_godzina);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_godzina + 1;
-
-  char minuta_100[5];
-  int liczba_cyfr_100_minuta;
-  int_to_char_100(minuta, minuta_100, liczba_cyfr_100_minuta);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_minuta + 1;
-
-  char sekunda_100[5];
-  int liczba_cyfr_100_sekunda;
-  int_to_char_100(sekunda, sekunda_100, liczba_cyfr_100_sekunda);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_sekunda + 1;
-
-  char lokalizacja_100[2][10];
-  int liczba_cyfr_100_lokalizacja[2];
-  double_to_char_100(lokalizacja[0], lokalizacja_100[0], 4, liczba_cyfr_100_lokalizacja[0]);
-  double_to_char_100(lokalizacja[1], lokalizacja_100[1], 4, liczba_cyfr_100_lokalizacja[1]);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_lokalizacja[0] + 1;
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_lokalizacja[1] + 1;
-
-  char wysokosc_100[7];
-  int liczba_cyfr_100_wysokosc;
-  double_to_char_100(wysokosc, wysokosc_100, 2, liczba_cyfr_100_wysokosc);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_wysokosc + 1;
-
-  char temperatura_DS18B20_100[7];
-  int liczba_cyfr_100_temperatura_DS18B20;
-  double_to_char_100(temperatura_DS18B20, temperatura_DS18B20_100, 2, liczba_cyfr_100_temperatura_DS18B20);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_DS18B20 + 1;
-
-  char temperatura_SHT_100[7];
-  int liczba_cyfr_100_temperatura_SHT;
-  double_to_char_100(temperatura_SHT, temperatura_SHT_100, 2, liczba_cyfr_100_temperatura_SHT);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_SHT + 1;
-
-  char wilgotnosc_100[7];
-  int liczba_cyfr_100_wilgotnosc;
-  double_to_char_100(wilgotnosc, wilgotnosc_100, 2, liczba_cyfr_100_wilgotnosc);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_wilgotnosc + 1;
-
-  char akcelerometr_100[3][7];
-  int liczba_cyfr_100_akcelerometr[3];
-  double_to_char_100(akcelerometr[0], akcelerometr_100[0], 2, liczba_cyfr_100_akcelerometr[0]);
-  double_to_char_100(akcelerometr[1], akcelerometr_100[1], 2, liczba_cyfr_100_akcelerometr[1]);
-  double_to_char_100(akcelerometr[2], akcelerometr_100[2], 2, liczba_cyfr_100_akcelerometr[2]);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[0] + 1;
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[1] + 1;
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[2] + 1;
-
-  char zyroskop_100[3][7];
-  int liczba_cyfr_100_zyroskop[3];
-  double_to_char_100(zyroskop[0], zyroskop_100[0], 2, liczba_cyfr_100_zyroskop[0]);
-  double_to_char_100(zyroskop[1], zyroskop_100[1], 2, liczba_cyfr_100_zyroskop[1]);
-  double_to_char_100(zyroskop[2], zyroskop_100[2], 2, liczba_cyfr_100_zyroskop[2]);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[0] + 1;
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[1] + 1;
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[2] + 1;
-
-  char magnetometr_100[3][7];
-  int liczba_cyfr_100_magnetometr[3];
-  double_to_char_100(magnetometr[0], magnetometr_100[0], 2, liczba_cyfr_100_magnetometr[0]);
-  double_to_char_100(magnetometr[1], magnetometr_100[1], 2, liczba_cyfr_100_magnetometr[1]);
-  double_to_char_100(magnetometr[2], magnetometr_100[2], 2, liczba_cyfr_100_magnetometr[2]);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[0] + 1;
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[1] + 1;
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[2] + 1;
-
-  char temperatura_altimu_100[7];
-  int liczba_cyfr_100_temperatura_altimu;
-  double_to_char_100(temperatura_altimu, temperatura_altimu_100, 2, liczba_cyfr_100_temperatura_altimu);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_altimu + 1;
-
-  char cisnienie_altimu_100[7];
-  int liczba_cyfr_100_cisnienie_altimu;
-  double_to_char_100(cisnienie_altimu, cisnienie_altimu_100, 2, liczba_cyfr_100_cisnienie_altimu);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_cisnienie_altimu + 1;
-
-  char wilgotnosc_ziemi_100[7];
-  int liczba_cyfr_100_wilgotnosc_ziemi;
-  double_to_char_100(wilgotnosc_ziemi, wilgotnosc_ziemi_100, 2, liczba_cyfr_100_wilgotnosc_ziemi);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_wilgotnosc_ziemi + 1;
-
-  char spis_dzialajacych_100[5];
-  int liczba_cyfr_100_spis_dzialajacych;
-  int_to_char_100(spis_dzialajacych, spis_dzialajacych_100, liczba_cyfr_100_spis_dzialajacych);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_spis_dzialajacych + 1;
-
-  char napiecie_baterii_100[5];
-  int liczba_cyfr_100_napiecie_baterii;
-  double_to_char_100(napiecie_baterii, napiecie_baterii_100, 2, liczba_cyfr_100_napiecie_baterii);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_napiecie_baterii + 1;
-
-  char opis_dzialania_100[7];
-  int liczba_cyfr_100_opis_dzialania;
-  int_to_char_100(opis_dzialania, opis_dzialania_100, liczba_cyfr_100_opis_dzialania);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_opis_dzialania + 1;
-
-  char RSSI_cansat_100[7];
-  int liczba_cyfr_100_RSSI_cansat;
-  int_to_char_100(RSSI_cansat, RSSI_cansat_100, liczba_cyfr_100_RSSI_cansat);
-  dlugosc_gotowego_tekstu += liczba_cyfr_100_RSSI_cansat + 1;
-
-  char gotowy_tekst[dlugosc_gotowego_tekstu + 1];
-
-  int nr_znaku = 0;
-
-  dopisywanie_gotowy_tekst(gotowy_tekst, godzina_100, liczba_cyfr_100_godzina, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, minuta_100, liczba_cyfr_100_minuta, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, sekunda_100, liczba_cyfr_100_sekunda, nr_znaku, 0);
-  if (lokalizacja_znak[0] == 'N')
+  if(znalezione_nadajnik == 1)
   {
-    gotowy_tekst[nr_znaku] = 16;
-  }
-  else                    //'S'
-  {
-    gotowy_tekst[nr_znaku] = 17;
-  }
-  dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_100[0], liczba_cyfr_100_lokalizacja[0], nr_znaku, 2);
-  if (lokalizacja_znak[1] == 'W')
-  {
-    gotowy_tekst[nr_znaku] = 16;
-  }
-  else                    //'E'
-  {
-    gotowy_tekst[nr_znaku] = 17;
-  }
-  dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_100[1], liczba_cyfr_100_lokalizacja[1], nr_znaku, 2);
-  dopisywanie_gotowy_tekst(gotowy_tekst, wysokosc_100, liczba_cyfr_100_wysokosc, nr_znaku, ujemna_sprawdz(wysokosc));
-  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_DS18B20_100, liczba_cyfr_100_temperatura_DS18B20, nr_znaku, ujemna_sprawdz(temperatura_DS18B20));
-  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_SHT_100, liczba_cyfr_100_temperatura_SHT, nr_znaku, ujemna_sprawdz(temperatura_SHT));
-  dopisywanie_gotowy_tekst(gotowy_tekst, wilgotnosc_100, liczba_cyfr_100_wilgotnosc, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[0], liczba_cyfr_100_akcelerometr[0], nr_znaku, ujemna_sprawdz(akcelerometr[0]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[1], liczba_cyfr_100_akcelerometr[1], nr_znaku, ujemna_sprawdz(akcelerometr[1]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[2], liczba_cyfr_100_akcelerometr[2], nr_znaku, ujemna_sprawdz(akcelerometr[2]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[0], liczba_cyfr_100_zyroskop[0], nr_znaku, ujemna_sprawdz(zyroskop[0]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[1], liczba_cyfr_100_zyroskop[1], nr_znaku, ujemna_sprawdz(zyroskop[1]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[2], liczba_cyfr_100_zyroskop[2], nr_znaku, ujemna_sprawdz(zyroskop[2]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[0], liczba_cyfr_100_magnetometr[0], nr_znaku, ujemna_sprawdz(magnetometr[0]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[1], liczba_cyfr_100_magnetometr[1], nr_znaku, ujemna_sprawdz(magnetometr[1]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[2], liczba_cyfr_100_magnetometr[2], nr_znaku, ujemna_sprawdz(magnetometr[2]));
-  dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_altimu_100, liczba_cyfr_100_temperatura_altimu, nr_znaku, ujemna_sprawdz(temperatura_altimu));
-  dopisywanie_gotowy_tekst(gotowy_tekst, cisnienie_altimu_100, liczba_cyfr_100_cisnienie_altimu, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, wilgotnosc_ziemi_100, liczba_cyfr_100_wilgotnosc_ziemi, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, spis_dzialajacych_100, liczba_cyfr_100_spis_dzialajacych, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, napiecie_baterii_100, liczba_cyfr_100_napiecie_baterii, nr_znaku, ujemna_sprawdz(napiecie_baterii));
-  dopisywanie_gotowy_tekst(gotowy_tekst, opis_dzialania_100, liczba_cyfr_100_opis_dzialania, nr_znaku, 0);
-  dopisywanie_gotowy_tekst(gotowy_tekst, RSSI_cansat_100, liczba_cyfr_100_RSSI_cansat, nr_znaku, ujemna_sprawdz(RSSI_cansat));
+    digitalWrite(pin_cs_nadajnik, LOW);
+  
+    int dlugosc_gotowego_tekstu = 0;
+    double suma_kontrolna = 0;
 
-  gotowy_tekst[dlugosc_gotowego_tekstu] = '\0';
+    char numer_pomiaru_100[5];
+    int liczba_cyfr_100_numer_pomiaru;
+    int_to_char_100(numer_pomiaru, numer_pomiaru_100, liczba_cyfr_100_numer_pomiaru);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_numer_pomiaru + 1;
+    suma_kontrolna += numer_pomiaru;
+  
+    char godzina_100[5];
+    int liczba_cyfr_100_godzina;
+    int_to_char_100(godzina, godzina_100, liczba_cyfr_100_godzina);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_godzina + 1;
+    suma_kontrolna += godzina;
+  
+    char minuta_100[5];
+    int liczba_cyfr_100_minuta;
+    int_to_char_100(minuta, minuta_100, liczba_cyfr_100_minuta);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_minuta + 1;
+    suma_kontrolna += minuta;
+  
+    char sekunda_100[5];
+    int liczba_cyfr_100_sekunda;
+    int_to_char_100(sekunda, sekunda_100, liczba_cyfr_100_sekunda);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_sekunda + 1;
+    suma_kontrolna += sekunda;
+  
+    char lokalizacja_100[2][10];
+    int liczba_cyfr_100_lokalizacja[2];
+    zaokraglij(lokalizacja[0], 4);
+    zaokraglij(lokalizacja[1], 4);
+    double_to_char_100(lokalizacja[0], lokalizacja_100[0], 4, liczba_cyfr_100_lokalizacja[0]);
+    double_to_char_100(lokalizacja[1], lokalizacja_100[1], 4, liczba_cyfr_100_lokalizacja[1]);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_lokalizacja[0] + 1;
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_lokalizacja[1] + 1;
+    suma_kontrolna += lokalizacja[0];
+    suma_kontrolna += lokalizacja[1];
+  
+    char wysokosc_100[7];
+    int liczba_cyfr_100_wysokosc;
+    zaokraglij(wysokosc, 2);
+    double_to_char_100(wysokosc, wysokosc_100, 2, liczba_cyfr_100_wysokosc);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_wysokosc + 1;
+    suma_kontrolna += wysokosc;
+  
+    char temperatura_DS18B20_100[7];
+    int liczba_cyfr_100_temperatura_DS18B20;
+    zaokraglij(temperatura_DS18B20, 2);
+    double_to_char_100(temperatura_DS18B20, temperatura_DS18B20_100, 2, liczba_cyfr_100_temperatura_DS18B20);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_DS18B20 + 1;
+    suma_kontrolna += temperatura_DS18B20;
+  
+    char temperatura_SHT_100[7];
+    int liczba_cyfr_100_temperatura_SHT;
+    zaokraglij(temperatura_SHT, 2);
+    double_to_char_100(temperatura_SHT, temperatura_SHT_100, 2, liczba_cyfr_100_temperatura_SHT);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_SHT + 1;
+    suma_kontrolna += temperatura_SHT;
+  
+    char wilgotnosc_100[7];
+    int liczba_cyfr_100_wilgotnosc;
+    zaokraglij(wilgotnosc, 2);
+    double_to_char_100(wilgotnosc, wilgotnosc_100, 2, liczba_cyfr_100_wilgotnosc);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_wilgotnosc + 1;
+    suma_kontrolna += wilgotnosc;
+  
+    char akcelerometr_100[3][7];
+    int liczba_cyfr_100_akcelerometr[3];
+    zaokraglij(akcelerometr[0], 2);
+    zaokraglij(akcelerometr[1], 2);
+    zaokraglij(akcelerometr[2], 2);
+    double_to_char_100(akcelerometr[0], akcelerometr_100[0], 2, liczba_cyfr_100_akcelerometr[0]);
+    double_to_char_100(akcelerometr[1], akcelerometr_100[1], 2, liczba_cyfr_100_akcelerometr[1]);
+    double_to_char_100(akcelerometr[2], akcelerometr_100[2], 2, liczba_cyfr_100_akcelerometr[2]);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[0] + 1;
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[1] + 1;
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_akcelerometr[2] + 1;
+    suma_kontrolna += akcelerometr[0];
+    suma_kontrolna += akcelerometr[1];
+    suma_kontrolna += akcelerometr[2];
+  
+    char zyroskop_100[3][7];
+    int liczba_cyfr_100_zyroskop[3];
+    zaokraglij(zyroskop[0], 2);
+    zaokraglij(zyroskop[1], 2);
+    zaokraglij(zyroskop[2], 2);
+    double_to_char_100(zyroskop[0], zyroskop_100[0], 2, liczba_cyfr_100_zyroskop[0]);
+    double_to_char_100(zyroskop[1], zyroskop_100[1], 2, liczba_cyfr_100_zyroskop[1]);
+    double_to_char_100(zyroskop[2], zyroskop_100[2], 2, liczba_cyfr_100_zyroskop[2]);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[0] + 1;
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[1] + 1;
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_zyroskop[2] + 1;
+    suma_kontrolna += zyroskop[0];
+    suma_kontrolna += zyroskop[1];
+    suma_kontrolna += zyroskop[2];
+  
+    char magnetometr_100[3][7];
+    int liczba_cyfr_100_magnetometr[3];
+    zaokraglij(magnetometr[0], 2);
+    zaokraglij(magnetometr[1], 2);
+    zaokraglij(magnetometr[2], 2);
+    double_to_char_100(magnetometr[0], magnetometr_100[0], 2, liczba_cyfr_100_magnetometr[0]);
+    double_to_char_100(magnetometr[1], magnetometr_100[1], 2, liczba_cyfr_100_magnetometr[1]);
+    double_to_char_100(magnetometr[2], magnetometr_100[2], 2, liczba_cyfr_100_magnetometr[2]);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[0] + 1;
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[1] + 1;
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_magnetometr[2] + 1;
+    suma_kontrolna += magnetometr[0];
+    suma_kontrolna += magnetometr[1];
+    suma_kontrolna += magnetometr[2];
+  
+    char temperatura_altimu_100[7];
+    int liczba_cyfr_100_temperatura_altimu;
+    zaokraglij(temperatura_altimu, 2);
+    double_to_char_100(temperatura_altimu, temperatura_altimu_100, 2, liczba_cyfr_100_temperatura_altimu);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_temperatura_altimu + 1;
+    suma_kontrolna += temperatura_altimu;
+  
+    char cisnienie_altimu_100[7];
+    int liczba_cyfr_100_cisnienie_altimu;
+    zaokraglij(cisnienie_altimu, 2);
+    double_to_char_100(cisnienie_altimu, cisnienie_altimu_100, 2, liczba_cyfr_100_cisnienie_altimu);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_cisnienie_altimu + 1;
+    suma_kontrolna += cisnienie_altimu;
+  
+    char wilgotnosc_ziemi_100[7];
+    int liczba_cyfr_100_wilgotnosc_ziemi;
+    zaokraglij(wilgotnosc_ziemi, 2);
+    double_to_char_100(wilgotnosc_ziemi, wilgotnosc_ziemi_100, 2, liczba_cyfr_100_wilgotnosc_ziemi);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_wilgotnosc_ziemi + 1;
+    suma_kontrolna += wilgotnosc_ziemi;
 
-  Serial.println(gotowy_tekst);
-  Serial.print("Dlugosc gotowego tekstu: ");
-  Serial.println(dlugosc_gotowego_tekstu);
+    char kolor_jasnosc_100[5];
+    int liczba_cyfr_100_kolor_jasnosc;
+    int_to_char_100(kolor_jasnosc, kolor_jasnosc_100, liczba_cyfr_100_kolor_jasnosc);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_kolor_jasnosc + 1;
+    suma_kontrolna += kolor_jasnosc;
 
-  rf95.send((uint8_t *)gotowy_tekst, dlugosc_gotowego_tekstu + 1);
-  poczatek = millis();
-  rf95.waitPacketSent();
-  koniec = millis();
-  Serial.print("Czas wykonania czakanie na wyslanie: ");
-  Serial.println(koniec - poczatek);
+    char kolor_czerwony_100[5];
+    int liczba_cyfr_100_kolor_czerwony;
+    int_to_char_100(kolor_czerwony, kolor_czerwony_100, liczba_cyfr_100_kolor_czerwony);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_kolor_czerwony + 1;
+    suma_kontrolna += kolor_czerwony;
 
-  digitalWrite(pin_cs_nadajnik, HIGH);
+    char kolor_zielony_100[5];
+    int liczba_cyfr_100_kolor_zielony;
+    int_to_char_100(kolor_zielony, kolor_zielony_100, liczba_cyfr_100_kolor_zielony);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_kolor_zielony + 1;
+    suma_kontrolna += kolor_zielony;
+
+    char kolor_niebieski_100[5];
+    int liczba_cyfr_100_kolor_niebieski;
+    int_to_char_100(kolor_niebieski, kolor_niebieski_100, liczba_cyfr_100_kolor_niebieski);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_kolor_niebieski + 1;
+    suma_kontrolna += kolor_niebieski;
+
+    char odleglosc_przeszkoda_100[5];
+    int liczba_cyfr_100_odleglosc_przeszkoda;
+    int_to_char_100(odleglosc_przeszkoda, odleglosc_przeszkoda_100, liczba_cyfr_100_odleglosc_przeszkoda);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_odleglosc_przeszkoda + 1;
+    suma_kontrolna += odleglosc_przeszkoda;
+  
+    char spis_dzialajacych_100[5];
+    int liczba_cyfr_100_spis_dzialajacych;
+    int_to_char_100(spis_dzialajacych, spis_dzialajacych_100, liczba_cyfr_100_spis_dzialajacych);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_spis_dzialajacych + 1;
+    suma_kontrolna += spis_dzialajacych;
+  
+    char napiecie_baterii_100[5];
+    int liczba_cyfr_100_napiecie_baterii;
+    zaokraglij(napiecie_baterii, 2);
+    double_to_char_100(napiecie_baterii, napiecie_baterii_100, 2, liczba_cyfr_100_napiecie_baterii);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_napiecie_baterii + 1;
+    suma_kontrolna += napiecie_baterii;
+  
+    char opis_dzialania_100[7];
+    int liczba_cyfr_100_opis_dzialania;
+    int_to_char_100(opis_dzialania, opis_dzialania_100, liczba_cyfr_100_opis_dzialania);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_opis_dzialania + 1;
+    suma_kontrolna += opis_dzialania;
+  
+    char RSSI_cansat_100[7];
+    int liczba_cyfr_100_RSSI_cansat;
+    int_to_char_100(RSSI_cansat, RSSI_cansat_100, liczba_cyfr_100_RSSI_cansat);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_RSSI_cansat + 1;
+    suma_kontrolna += RSSI_cansat;
+  
+    char suma_kontrolna_100[10];
+    int liczba_cyfr_100_suma_kontrolna;
+    zaokraglij(suma_kontrolna, 4);
+    double_to_char_100(suma_kontrolna, suma_kontrolna_100, 4, liczba_cyfr_100_suma_kontrolna);
+    dlugosc_gotowego_tekstu += liczba_cyfr_100_suma_kontrolna + 1;
+  
+    Serial.print("Suma kontrolna: ");
+    Serial.println(suma_kontrolna, 4);
+    Serial.print("Dlugosc suma kontrolna: ");
+    Serial.println(liczba_cyfr_100_suma_kontrolna);
+  
+    char gotowy_tekst[dlugosc_gotowego_tekstu + 1];
+  
+    int nr_znaku = 0;
+
+    dopisywanie_gotowy_tekst(gotowy_tekst, numer_pomiaru_100, liczba_cyfr_100_numer_pomiaru, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, godzina_100, liczba_cyfr_100_godzina, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, minuta_100, liczba_cyfr_100_minuta, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, sekunda_100, liczba_cyfr_100_sekunda, nr_znaku, 0);
+    if (lokalizacja_znak[0] == 'N')
+    {
+      gotowy_tekst[nr_znaku] = 16;
+    }
+    else                    //'S'
+    {
+      gotowy_tekst[nr_znaku] = 17;
+    }
+    dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_100[0], liczba_cyfr_100_lokalizacja[0], nr_znaku, 2);
+    if (lokalizacja_znak[1] == 'W')
+    {
+      gotowy_tekst[nr_znaku] = 16;
+    }
+    else                    //'E'
+    {
+      gotowy_tekst[nr_znaku] = 17;
+    }
+    dopisywanie_gotowy_tekst(gotowy_tekst, lokalizacja_100[1], liczba_cyfr_100_lokalizacja[1], nr_znaku, 2);
+    dopisywanie_gotowy_tekst(gotowy_tekst, wysokosc_100, liczba_cyfr_100_wysokosc, nr_znaku, ujemna_sprawdz(wysokosc));
+    dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_DS18B20_100, liczba_cyfr_100_temperatura_DS18B20, nr_znaku, ujemna_sprawdz(temperatura_DS18B20));
+    dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_SHT_100, liczba_cyfr_100_temperatura_SHT, nr_znaku, ujemna_sprawdz(temperatura_SHT));
+    dopisywanie_gotowy_tekst(gotowy_tekst, wilgotnosc_100, liczba_cyfr_100_wilgotnosc, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[0], liczba_cyfr_100_akcelerometr[0], nr_znaku, ujemna_sprawdz(akcelerometr[0]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[1], liczba_cyfr_100_akcelerometr[1], nr_znaku, ujemna_sprawdz(akcelerometr[1]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_100[2], liczba_cyfr_100_akcelerometr[2], nr_znaku, ujemna_sprawdz(akcelerometr[2]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[0], liczba_cyfr_100_zyroskop[0], nr_znaku, ujemna_sprawdz(zyroskop[0]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[1], liczba_cyfr_100_zyroskop[1], nr_znaku, ujemna_sprawdz(zyroskop[1]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, zyroskop_100[2], liczba_cyfr_100_zyroskop[2], nr_znaku, ujemna_sprawdz(zyroskop[2]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[0], liczba_cyfr_100_magnetometr[0], nr_znaku, ujemna_sprawdz(magnetometr[0]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[1], liczba_cyfr_100_magnetometr[1], nr_znaku, ujemna_sprawdz(magnetometr[1]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_100[2], liczba_cyfr_100_magnetometr[2], nr_znaku, ujemna_sprawdz(magnetometr[2]));
+    dopisywanie_gotowy_tekst(gotowy_tekst, temperatura_altimu_100, liczba_cyfr_100_temperatura_altimu, nr_znaku, ujemna_sprawdz(temperatura_altimu));
+    dopisywanie_gotowy_tekst(gotowy_tekst, cisnienie_altimu_100, liczba_cyfr_100_cisnienie_altimu, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, wilgotnosc_ziemi_100, liczba_cyfr_100_wilgotnosc_ziemi, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, kolor_jasnosc_100, liczba_cyfr_100_kolor_jasnosc, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, kolor_czerwony_100, liczba_cyfr_100_kolor_czerwony, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, kolor_zielony_100, liczba_cyfr_100_kolor_zielony, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, kolor_niebieski_100, liczba_cyfr_100_kolor_niebieski, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, odleglosc_przeszkoda_100, liczba_cyfr_100_odleglosc_przeszkoda, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, spis_dzialajacych_100, liczba_cyfr_100_spis_dzialajacych, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, napiecie_baterii_100, liczba_cyfr_100_napiecie_baterii, nr_znaku, ujemna_sprawdz(napiecie_baterii));
+    dopisywanie_gotowy_tekst(gotowy_tekst, opis_dzialania_100, liczba_cyfr_100_opis_dzialania, nr_znaku, 0);
+    dopisywanie_gotowy_tekst(gotowy_tekst, RSSI_cansat_100, liczba_cyfr_100_RSSI_cansat, nr_znaku, ujemna_sprawdz(RSSI_cansat));
+    dopisywanie_gotowy_tekst(gotowy_tekst, suma_kontrolna_100, liczba_cyfr_100_suma_kontrolna, nr_znaku, ujemna_sprawdz(suma_kontrolna));
+  
+    gotowy_tekst[dlugosc_gotowego_tekstu] = '\0';
+  
+    Serial.println(gotowy_tekst);
+    Serial.print("Dlugosc gotowego tekstu: ");
+    Serial.println(dlugosc_gotowego_tekstu);
+  
+    rf95.send((uint8_t *)gotowy_tekst, dlugosc_gotowego_tekstu + 1);
+    poczatek = millis();
+    rf95.waitPacketSent();
+    koniec = millis();
+    Serial.print("Czas wykonania czakanie na wyslanie: ");
+    Serial.println(koniec - poczatek);
+  
+    digitalWrite(pin_cs_nadajnik, HIGH);
+  }
 }
 
 void oczekiwanie_na_odpowiedz()
 {
-  uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
-  uint8_t len = sizeof(buf);
-
-  if (rf95.waitAvailableTimeout(200))
+  if(znalezione_nadajnik == 1)
   {
-    if (rf95.recv(buf, &len))
+    uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+    uint8_t len = sizeof(buf);
+  
+    if (rf95.waitAvailableTimeout(200))
     {
-      Serial.print("Got reply: ");
-      Serial.println((char*)buf);
-      RSSI_cansat = rf95.lastRssi();
+      if (rf95.recv(buf, &len))
+      {
+        Serial.print("Got reply: ");
+        Serial.println((char*)buf);
+        RSSI_cansat = rf95.lastRssi();
+      }
+      else
+      {
+        RSSI_cansat = 0;
+        Serial.println("Brak sygnalu1");
+      }
     }
     else
     {
       RSSI_cansat = 0;
-      Serial.println("Brak sygnalu1");
+      Serial.println("Brak sygnalu2");
     }
   }
-  else
-  {
-    RSSI_cansat = 0;
-    Serial.println("Brak sygnalu2");
-  }
+}
+
+void odczytywanie_wszystkich_czujnikow()
+{
+  temperatura_SHT = 0;
+  wilgotnosc = 0;
+  temperatura_DS18B20 = 0;
+  numer_pomiaru++;
+  godzina = 0;
+  minuta = 0;
+  sekunda = 0;
+  dzien = 0;
+  miesiac = 0;
+  rok = 0;
+  fix = 0;
+  quality = 0;
+  lokalizacja[0] = 0;
+  lokalizacja[1] = 0;
+  lokalizacja_znak[0] = ' ';
+  lokalizacja_znak[1] = ' ';
+  szybkosc_wezly = 0;
+  kat = 0;
+  wysokosc = 0;
+  liczba_satelit = 0;
+  akcelerometr[0] = 0;
+  akcelerometr[1] = 0;
+  akcelerometr[2] = 0;
+  zyroskop[0] = 0;
+  zyroskop[1] = 0;
+  zyroskop[2] = 0;
+  magnetometr[0] = 0;
+  magnetometr[1] = 0;
+  magnetometr[2] = 0;
+  temperatura_altimu = 0;
+  cisnienie_altimu = 0;
+  wilgotnosc_ziemi = 0;
+  kolor_jasnosc = 0;
+  kolor_czerwony = 0;
+  kolor_zielony = 0;
+  kolor_niebieski = 0;
+  odleglosc_przeszkoda = 0;
+
+  spis_dzialajacych = 0;
+  napiecie_baterii = 0;
+  opis_dzialania = 0;
+
+  poczatek = millis();
+  odczytywanie_gps();
+  koniec = millis();
+  Serial.print("Czas wykonania GPS: ");
+  Serial.println(koniec - poczatek);
+
+  poczatek = millis();
+  odczytywanie_SHT();
+  koniec = millis();
+  Serial.print("Czas wykonania SHT: ");
+  Serial.println(koniec - poczatek);
+
+  poczatek = millis();
+  odczytywanie_DS18B20();
+  koniec = millis();
+  Serial.print("Czas wykonania DS18B20: ");
+  Serial.println(koniec - poczatek);
+
+  poczatek = millis();
+  odczytywanie_altimu();
+  koniec = millis();
+  Serial.print("Czas wykonania AltIMU: ");
+  Serial.println(koniec - poczatek);
+
+  odczytywanie_czujnik_kolorow();
+  odczytywanie_czujnik_odleglosci();
+
+  mierzenie_napiecia_baterii();
+  
+  tworzenie_spisu_dzialajacych();
 }
 
 void setup()
@@ -936,112 +1424,79 @@ void setup()
     }
   }
 
+  if ( apds.init() ) 
+  {
+    Serial.println(F("APDS-9960 initialization complete"));
+  } 
+  else 
+  {
+    Serial.println(F("Something went wrong during APDS-9960 init!"));
+  }
+  
+  if ( apds.enableLightSensor(false) ) 
+  {
+    Serial.println(F("Light sensor is now running"));
+  } 
+  else 
+  {
+    Serial.println(F("Something went wrong during light sensor init!"));
+  }
+  
+  delay(500);
+
+  if ( !apds.setProximityGain(PGAIN_2X) ) 
+  {
+    Serial.println(F("Something went wrong trying to set PGAIN"));
+  }
+  
+  if ( apds.enableProximitySensor(false) ) 
+  {
+    Serial.println(F("Proximity sensor is now running"));
+  } 
+  else 
+  {
+    Serial.println(F("Something went wrong during sensor init!"));
+  }
 }
 
 void loop()
 {
   odczytywanie_stale_gps();
 
-  if (millis() - timer > 1000)
+  if(mode == 0 || mode == 1)
   {
-    digitalWrite(13, HIGH);
-
-    poczatek_calkowity = millis();
-    timer = millis(); // reset the timer
-
-    temperatura_SHT = 0;
-    wilgotnosc = 0;
-    temperatura_DS18B20 = 0;
-    godzina = 0;
-    minuta = 0;
-    sekunda = 0;
-    dzien = 0;
-    miesiac = 0;
-    rok = 0;
-    fix = 0;
-    quality = 0;
-    lokalizacja[0] = 0;
-    lokalizacja[1] = 0;
-    lokalizacja_znak[0] = ' ';
-    lokalizacja_znak[1] = ' ';
-    szybkosc_wezly = 0;
-    kat = 0;
-    wysokosc = 0;
-    liczba_satelit = 0;
-    akcelerometr[0] = 0;
-    akcelerometr[1] = 0;
-    akcelerometr[2] = 0;
-    zyroskop[0] = 0;
-    zyroskop[1] = 0;
-    zyroskop[2] = 0;
-    magnetometr[0] = 0;
-    magnetometr[1] = 0;
-    magnetometr[2] = 0;
-    temperatura_altimu = 0;
-    cisnienie_altimu = 0;
-    wilgotnosc_ziemi = 0;
-
-    spis_dzialajacych = 0;
-    napiecie_baterii = 0;
-    opis_dzialania = 0;
-
-    poczatek = millis();
-    odczytywanie_gps();
-    koniec = millis();
-    Serial.print("Czas wykonania GPS: ");
-    Serial.println(koniec - poczatek);
-
-    poczatek = millis();
-    odczytywanie_SHT();
-    koniec = millis();
-    Serial.print("Czas wykonania SHT: ");
-    Serial.println(koniec - poczatek);
-
-    poczatek = millis();
-    odczytywanie_DS18B20();
-    koniec = millis();
-    Serial.print("Czas wykonania DS18B20: ");
-    Serial.println(koniec - poczatek);
-
-    poczatek = millis();
-    odczytywanie_altimu();
-    koniec = millis();
-    Serial.print("Czas wykonania AltIMU: ");
-    Serial.println(koniec - poczatek);
-
-    tworzenie_spisu_dzialajacych();
-
-    mierzenie_napiecia_baterii();
-
-    poczatek = millis();
-    wyswietlanie();
-    koniec = millis();
-    Serial.print("Czas wykonania wyswietlanie: ");
-    Serial.println(koniec - poczatek);
-
-    poczatek = millis();
-    if (znalezione_SD == 1)
+    if (millis() - timer > 1000)
     {
+      digitalWrite(13, HIGH);
+  
+      poczatek_calkowity = millis();
+      timer = millis(); // reset the timer
+  
+      odczytywanie_wszystkich_czujnikow();
+  
+      wyswietlanie();
+  
+      poczatek = millis();
       zapisywanie_SD();
-    }
-    koniec = millis();
-    Serial.print("Czas wykonania SD: ");
-    Serial.println(koniec - poczatek);
-
-    poczatek = millis();
-    if (znalezione_nadajnik == 1)
-    {
+      koniec = millis();
+      Serial.print("Czas wykonania SD: ");
+      Serial.println(koniec - poczatek);
+  
+      poczatek = millis();
       wysylanie();
       oczekiwanie_na_odpowiedz();
+      koniec = millis();
+      Serial.print("Czas wykonania wysylanie: ");
+      Serial.println(koniec - poczatek);
+  
+      algorytm_rozpoznanie_upadku();
+  
+      koniec_calkowity = millis();
+      Serial.print("Czas wykonania programu: ");
+      Serial.println(koniec_calkowity - poczatek_calkowity);
+  
+      digitalWrite(13, LOW);
     }
-    koniec = millis();
-    Serial.print("Czas wykonania wysylanie: ");
-    Serial.println(koniec - poczatek);
-
-    koniec_calkowity = millis();
-    Serial.print("Czas wykonania programu: ");
-    Serial.println(koniec_calkowity - poczatek_calkowity);
-
-    digitalWrite(13, LOW);
   }
+    
 }
