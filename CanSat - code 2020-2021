@@ -40,11 +40,16 @@ bool znalezione_wilgotnosc_ziemi = 0;
 bool znalezione_nadajnik = 0;
 
 int mode = 0;
+
 double cisnienie_na_ziemi = 1028.0;
 double cisnienie_granica_ziemi = 7;
 int timer_wzlatywanie = 0;
 int timer_opadanie = 0;
 double poprzednie_cisnienie = 0;
+
+int timer_male_napiecie = 0;
+
+int timer_mode_2 = 0;
 
 double temperatura_SHT = 0;
 double wilgotnosc = 0;
@@ -85,6 +90,17 @@ int pin_cs_nadajnik = 8;
 int pin_RST_nadajnik = 4;
 int pin_INT_nadajnik = 3;
 #define czestotliwosc_nadajnika 433.0
+
+const int IA1 = A1;  //prawy - szybkosc
+const int IA2 = 9; //prawy - kierunek
+const int IB1 = A2; //lewy - szybkosc
+const int IB2 = 10; //lewy - kierunek
+
+const int IA1_wysuwanie = A3;
+const int IA2_wysuwanie = 11;
+
+const int IA1_wysuwanie_czujnika = A4;
+const int IA2_wysuwanie_czujnika = 12;
 
 RH_RF95 rf95(pin_cs_nadajnik, pin_INT_nadajnik);
 
@@ -219,18 +235,12 @@ uint32_t koniec;
   MA2 - SILNIK -
 */
 
-const int IA1 = A1;  //prawy - szybkosc
-const int IA2 = 9; //prawy - kierunek
-const int IB1 = A2; //lewy - szybkosc
-const int IB2 = 10; //lewy - kierunek
-
-const int IA1_wysuwanie = A3;
-const int IA2_wysuwanie = 11;
-
 int aktualna_predkosc_prawe = 0;
 int aktualna_predkosc_lewe = 0;
 
 int aktualna_predkosc_wysuwania = 0;
+
+int aktualna_predkosc_wysuwania_czujnika = 0;
 
 void ruch_do_przodu()
 {
@@ -416,6 +426,63 @@ void wysuwanie_podwozia()
   wysuwanie_kol();
   delay(30000);
   digitalWrite(IA2_wysuwanie, LOW);
+}
+
+void wysuwanie_czujnika()
+{
+  if(aktualna_predkosc_wysuwania_czujnika == 0)
+  {
+    digitalWrite(IA2_wysuwanie_czujnika, HIGH);
+    analogWrite(IA1_wysuwanie_czujnika, 255);
+
+    for (int i = 255; i >= 15; i -= 20)
+    {
+     analogWrite(IA1_wysuwanie_czujnika, i);
+     delay(80);
+    }
+    analogWrite(IA1_wysuwanie_czujnika, 0);
+    aktualna_predkosc_wysuwania_czujnika = -200;
+  }
+}
+
+void wsuwanie_czujnika()
+{
+  if(aktualna_predkosc_wysuwania_czujnika == 0)
+  {
+    digitalWrite(IA2_wysuwanie_czujnika, LOW);
+    for (int i = 0; i <= 240; i += 20)
+    {
+     analogWrite(IA1_wysuwanie_czujnika, i);
+     delay(80);
+    }
+    analogWrite(IA1_wysuwanie_czujnika, 255);
+    aktualna_predkosc_wysuwania_czujnika = 200;
+  }
+}
+
+void zatrzymanie_wysuwania_czujnika()
+{
+  if(aktualna_predkosc_wysuwania_czujnika == 200)
+  {
+    for (int i = 200; i >= 0; i -= 20)
+    {
+     analogWrite(IA1_wysuwanie_czujnika, i);
+     delay(80);
+    }
+    aktualna_predkosc_wysuwania_czujnika = 0;
+  }
+  else if(aktualna_predkosc_wysuwania_czujnika == -200)
+  {
+    for (int i = 55; i <= 255; i += 20)
+    {
+     analogWrite(IA1_wysuwanie_czujnika, i);
+     delay(80);
+    }
+    aktualna_predkosc_wysuwania_czujnika = 0;
+  }
+
+  analogWrite(IA1_wysuwanie_czujnika, 0);
+  digitalWrite(IA2_wysuwanie_czujnika, LOW);
 }
 
 int potega(int liczba, int potega)
@@ -607,14 +674,19 @@ void odczytywanie_SHT()
 
 void odczytywanie_wilgotnosc_ziemi()
 {
-  ;//znalezione_wilgotnosc_ziemi = 0;
+  wilgotnosc_ziemi = 0;
+  for(int i=0; i<5; i++)
+  {
+    wilgotnosc_ziemi += (-1*((analogRead(A0) - 142.1)/7.8 - 100));
+  }
+
+  wilgotnosc_ziemi /= 5;
 }
 
 void algorytm_rozpoznanie_upadku()
 {
   if (timer_wzlatywanie < 5)
   {
-    wilgotnosc_ziemi = 1;
     if (cisnienie_altimu < cisnienie_na_ziemi - cisnienie_granica_ziemi)
     {
       timer_wzlatywanie++;
@@ -627,7 +699,6 @@ void algorytm_rozpoznanie_upadku()
 
   if (timer_wzlatywanie >= 5 && timer_opadanie < 10)
   {
-    wilgotnosc_ziemi = 2;
     if (cisnienie_altimu > cisnienie_na_ziemi - cisnienie_granica_ziemi)
     {
       if (cisnienie_altimu - poprzednie_cisnienie <= 0.25 && cisnienie_altimu - poprzednie_cisnienie >= -0.25)
@@ -644,11 +715,114 @@ void algorytm_rozpoznanie_upadku()
 
   if (timer_opadanie >= 10)
   {
-    wilgotnosc_ziemi = 3;
     mode = 1;
     rf95.ustaw_wysylanie_wolne();
     //odczytywanie_wilgotnosc_ziemi();
     //wysuwanie_podwozia();
+  }
+}
+
+void algorytm_jazdy()
+{
+  odczytywanie_altimu();
+  odczytywanie_czujnik_odleglosci();
+
+  double kat_obrot_odchylenia = 0;
+  double kat_odchylenie = 0;
+
+  double wypadkowa_a_xy = sqrt(magnetometr[0]*magnetometr[0] + magnetometr[1]*magnetometr[1]);
+  if(magnetometr[2] != 0)
+  {
+    kat_odchylenie = atan(wypadkowa_a_xy/magnetometr[2])*180/M_PI;
+  }
+  else
+  {
+    kat_odchylenie = 90;
+  }
+
+  if(magnetometr[0] != 0)
+  {
+    kat_obrot_odchylenia = atan(fabs(magnetometr[1]/magnetometr[0]))*180/M_PI;
+  }
+  else
+  {
+    kat_obrot_odchylenia = 90;
+  }
+
+  if(magnetometr[1] > 0)
+  {
+    if(magnetometr[0] < 0)
+    {
+      kat_obrot_odchylenia = 180 - kat_obrot_odchylenia;
+    }
+  }
+  else
+  {
+    if(magnetometr[0] < 0)
+    {
+      kat_obrot_odchylenia = 180 - kat_obrot_odchylenia;
+    }
+
+    kat_obrot_odchylenia *= -1;
+  }
+
+  if(kat_odchylenie > 20 && kat_obrot_odchylenia > 180)
+  {
+    wysuwanie_czujnika();
+    delay(30000);
+    zatrzymanie_wysuwania_czujnika();
+    
+    odczytywanie_wilgotnosc_ziemi();
+
+    wsuwanie_czujnika();
+    delay(30000);
+    zatrzymanie_wysuwania_czujnika();
+  }
+
+  if(kat_obrot_odchylenia > 40)
+  {
+    ruch_skrec_w_prawo();
+  }
+  else if(kat_obrot_odchylenia < -40)
+  {
+    ruch_skrec_w_lewo();
+  }
+  else
+  {
+    if(odleglosc_przeszkoda > 100)
+    {
+      if(kat_obrot_odchylenia < 0)
+      {
+        ruch_skrec_w_lewo();
+      }
+      else
+      {
+        ruch_skrec_w_prawo();
+      }
+    }
+    else
+    {
+      ruch_do_przodu();
+    }
+  }
+}
+
+void algorytm_male_napiecie()
+{
+  mierzenie_napiecia_baterii();
+  
+  if(napiecie_baterii <= 3.3)
+  {
+    timer_male_napiecie++;
+  }
+  else
+  {
+    timer_male_napiecie = 0;
+  }
+
+  if(timer_male_napiecie == 5)
+  {
+    mode = 2;
   }
 }
 
@@ -1232,12 +1406,23 @@ void wysylanie()
 
 void oczekiwanie_na_odpowiedz()
 {
+  int czas_oczekiwania = 0;
+  
+  if(mode == 0)
+  {
+    czas_oczekiwania = 200;
+  }
+  else
+  {
+    czas_oczekiwania = 1000;
+  }
+  
   if(znalezione_nadajnik == 1)
   {
     uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
     uint8_t len = sizeof(buf);
   
-    if (rf95.waitAvailableTimeout(200))
+    if (rf95.waitAvailableTimeout(czas_oczekiwania))
     {
       if (rf95.recv(buf, &len))
       {
@@ -1292,7 +1477,6 @@ void odczytywanie_wszystkich_czujnikow()
   magnetometr[2] = 0;
   temperatura_altimu = 0;
   cisnienie_altimu = 0;
-  wilgotnosc_ziemi = 0;
   kolor_jasnosc = 0;
   kolor_czerwony = 0;
   kolor_zielony = 0;
@@ -1457,20 +1641,38 @@ void setup()
   {
     Serial.println(F("Something went wrong during sensor init!"));
   }
+
+  pinMode(IA1, OUTPUT);
+  pinMode(IA2, OUTPUT);
+  pinMode(IB1, OUTPUT);
+  pinMode(IB2, OUTPUT);
+  pinMode(IA1_wysuwanie, OUTPUT);
+  pinMode(IA2_wysuwanie, OUTPUT);
+  pinMode(IA1_wysuwanie_czujnika, OUTPUT);
+  pinMode(IA2_wysuwanie_czujnika, OUTPUT);
+
+  analogWrite(IB1, 0);
+  digitalWrite(IB2, LOW);
+  analogWrite(IA1, 0);
+  digitalWrite(IA2, LOW);
+  analogWrite(IA1_wysuwanie, 0);
+  digitalWrite(IA2_wysuwanie, LOW);
+  analogWrite(IA1_wysuwanie_czujnika, 0);
+  digitalWrite(IA2_wysuwanie_czujnika, LOW);
 }
 
 void loop()
 {
   odczytywanie_stale_gps();
 
-  if(mode == 0 || mode == 1)
+  if(mode == 0)
   {
     if (millis() - timer > 1000)
     {
+      timer = millis();
       digitalWrite(13, HIGH);
   
       poczatek_calkowity = millis();
-      timer = millis(); // reset the timer
   
       odczytywanie_wszystkich_czujnikow();
   
@@ -1497,6 +1699,51 @@ void loop()
   
       digitalWrite(13, LOW);
     }
+  }
+  else if(mode == 1)
+  {
+    if(millis() - timer > 1000)
+    {
+      timer = millis();
+      timer_mode_2++;
+
+      algorytm_jazdy();
+
+      if(timer_mode_2 == 16)
+      {
+        odczytywanie_wszystkich_czujnikow();
+  
+        wyswietlanie();
+    
+        poczatek = millis();
+        zapisywanie_SD();
+        koniec = millis();
+        Serial.print("Czas wykonania SD: ");
+        Serial.println(koniec - poczatek);
+    
+        poczatek = millis();
+        wysylanie();
+        oczekiwanie_na_odpowiedz();
+        koniec = millis();
+        Serial.print("Czas wykonania wysylanie: ");
+        Serial.println(koniec - poczatek);
+
+        timer_mode_2 = 0;
+      }
+      
+      algorytm_male_napiecie();
+    }
+    
+  }
+  else if(mode == 2)
+  {
+    ruch_zatrzymaj();
+    while(napiecie_baterii <= 3.6)
+    {
+      mierzenie_napiecia_baterii();
+      delay(20000);
+    }
+    mode = 1;
   }
     
 }
