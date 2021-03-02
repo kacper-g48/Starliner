@@ -716,6 +716,9 @@ void algorytm_rozpoznanie_upadku()
   if (timer_opadanie >= 10)
   {
     mode = 1;
+    
+    zapisywanie_SD_tryb();
+    
     rf95.ustaw_wysylanie_wolne();
     //odczytywanie_wilgotnosc_ziemi();
     //wysuwanie_podwozia();
@@ -823,6 +826,8 @@ void algorytm_male_napiecie()
   if(timer_male_napiecie == 5)
   {
     mode = 2;
+
+    zapisywanie_SD_tryb();
   }
 }
 
@@ -900,6 +905,71 @@ void zapisywanie_SD()
     {
       Serial.println("Nie mozna otworzyc pliku na karcie SD");
       znalezione_SD = 0;
+    }
+  
+    plik.close();
+    digitalWrite(pin_cs_SD, HIGH);
+  }
+}
+
+void zapisywanie_SD_tryb()
+{
+  if(znalezione_SD == 1)
+  {
+    digitalWrite(pin_cs_SD, LOW);
+
+    SD.remove("tryb.txt");
+    
+    plik = SD.open("tryb.txt", FILE_WRITE);
+    if (plik)
+    {
+      znalezione_SD = 1;
+      Serial.println("Zapis SD");
+      plik.println(mode);
+    }
+    else
+    {
+      Serial.println("Nie mozna otworzyc pliku na karcie SD");
+      znalezione_SD = 0;
+    }
+  
+    plik.close();
+    digitalWrite(pin_cs_SD, HIGH);
+  }
+}
+
+void odczytywanie_SD_tryb()
+{
+  if(znalezione_SD == 1)
+  {
+    digitalWrite(pin_cs_SD, LOW);
+
+    char odczytany_tryb[2] = {'a', 'a'};
+    
+    plik = SD.open("tryb.txt", FILE_WRITE);
+    if (plik)
+    {
+      znalezione_SD = 1;
+      plik.read(odczytany_tryb, 2);
+      odczytany_tryb[1] = '\0';
+    }
+    else
+    {
+      Serial.println("Nie mozna otworzyc pliku na karcie SD");
+      znalezione_SD = 0;
+    }
+
+    if(odczytany_tryb[0] == 0)
+    {
+      mode = 0;
+      rf95.ustaw_wysylanie_szybkie();
+    }
+    else if(odczytany_tryb[1] == 1 || odczytany_tryb[1] == 2)
+    {
+      mode = 1;
+      rf95.ustaw_wysylanie_wolne();
+      //odczytywanie_wilgotnosc_ziemi();
+      //wysuwanie_podwozia();
     }
   
     plik.close();
@@ -1572,6 +1642,9 @@ void setup()
     Serial.println("Znaleziono karte SD");
     znalezione_SD = 1;
   }
+
+  odczytywanie_SD_tryb();
+  
   digitalWrite(pin_cs_SD, HIGH);
 
   //reset nadajnika
@@ -1738,12 +1811,16 @@ void loop()
   else if(mode == 2)
   {
     ruch_zatrzymaj();
+    
     while(napiecie_baterii <= 3.6)
     {
       mierzenie_napiecia_baterii();
       delay(20000);
     }
+    
     mode = 1;
+
+    zapisywanie_SD_tryb();
   }
     
 }
