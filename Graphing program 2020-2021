@@ -89,6 +89,7 @@ double odleglosc_calkowita = 0;
 double kat_wysokosc = 0;
 double kat_obrot = 0;
 double magnetometr_stacja[3] = {0, 0, 0};
+double akcelerometr_stacja[3] = {0, 0, 0};
 int spis_dzialajacych_stacja = 0;
 int RSSI_stacja = 0;
 
@@ -1375,7 +1376,7 @@ public:
 
 //ZMIENNE GLOBALNE (WYKRESY)
 const int liczba_wykresow_int = 14;
-const int liczba_wykresow_double = 31;
+const int liczba_wykresow_double = 34;
 const int liczba_wykresow = liczba_wykresow_int + liczba_wykresow_double;
 
 klasa_wykres_int tablica_wykresow_int[liczba_wykresow_int];
@@ -1427,11 +1428,14 @@ TABLICA_WYKRESOW_DOUBLE:
 37 - wykres_magnetometr_stacja0
 38 - wykres_magnetometr_stacja1
 39 - wykres_magnetometr_stacja2
-40 - wykres_roznica_wysokosci
-41 - wykres_odleglosc_prosta
-42 - wykres_odleglosc_calkowita
-43 - wykres_kat_wysokosc
-44 - wykres_kat_obrot*/
+40 - wykres_akcelerometr_stacja0
+41 - wykres_akcelerometr_stacja1
+42 - wykres_akcelerometr_stacja2
+43 - wykres_roznica_wysokosci
+44 - wykres_odleglosc_prosta
+45 - wykres_odleglosc_calkowita
+46 - wykres_kat_wysokosc
+47 - wykres_kat_obrot*/
 //ZMIENNE GLOBALNE (WYKRESY) - KONIEC
 
 class klasa_lista_dzialajacych
@@ -2093,6 +2097,9 @@ private:
 
     char wiadomosc_do_wyslania[12];
 
+    char wiadomosc_wysylanie_wolne_szybkie[10];
+    char wiadomosc_wysylanie_wolne_wolne[10];
+
     char wiadomosc_manualny_wlaczenie[10];
     char wiadomosc_manualny_wylaczenie[10];
 
@@ -2131,8 +2138,8 @@ public:
     tekst_odsylanie_koniec("Odsylanie koniec", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_odsylanie_koniec(0, 0, 120, 20), przycisk_wyslij_odsylanie(0, 0, 100, 30, "Wyslij odsylanie"),
     tekst_kat_obrot("Kat obrot", 0, 0, 255, 255, 255, 12), wpisywanie_klawiatura_kat_obrot(0, 0, 120, 20), tekst_kat_wysokosc("Kat wysokosc", 0, 0, 255, 255, 255, 12),
     wpisywanie_klawiatura_kat_wysokosc(0, 0, 120, 20), przycisk_wyslij_katy(0, 0, 100, 30, "Wyslij katy"),
-    tekst_wysylanie_wolne("Rodzaj wysylania", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_wysylanie_wolne(0, 0, 120, 25, 2), przycisk_wysylanie_wolne(0, 0, 100, 30, "Ustaw wysylanie"), tekst_wymagany_manualny("Wymagany manualny", 0, 0, 255, 255, 255, 12),
-    tekst_manualny("Tryb manualny", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_manualny(0, 0, 120, 25, 2), przycisk_wyslij_manualny(0, 0, 100, 30, "Wyslij manualny"),
+    tekst_wysylanie_wolne("Rodzaj wysylania", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_wysylanie_wolne(0, 0, 120, 25, 2), przycisk_wysylanie_wolne(0, 0, 100, 30, "Ustaw wysylanie"),
+    tekst_manualny("Tryb manualny", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_manualny(0, 0, 120, 25, 2), przycisk_wyslij_manualny(0, 0, 100, 30, "Wyslij manualny"), tekst_wymagany_manualny("Wymagany manualny", 0, 0, 255, 255, 255, 12),
     tekst_tryb("Tryb", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_tryb(0, 0, 120, 25, 3), przycisk_wyslij_tryb(0, 0, 100, 30, "Wyslij tryb"),
     tekst_ruch("Ruch", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_ruch(0, 0, 120, 25, 5), przycisk_wyslij_ruch(0, 0, 100, 30, "Wyslij ruch"),
     tekst_podwozie("Podwozie", 0, 0, 255, 255, 255, 12), wybieranie_scrollem_podwozie(0, 0, 120, 25, 3), przycisk_wyslij_podwozie(0, 0, 100, 30, "Wyslij podwozie"),
@@ -2175,6 +2182,14 @@ public:
             wiadomosc_do_wyslania[i] = 20;
         }
         wiadomosc_do_wyslania[11] = '\0';
+
+        for(int i=0; i<9; i++)
+        {
+            wiadomosc_wysylanie_wolne_szybkie[i] = 80;
+            wiadomosc_wysylanie_wolne_wolne[i] = 90;
+        }
+        wiadomosc_wysylanie_wolne_szybkie[9] = '\0';
+        wiadomosc_wysylanie_wolne_wolne[9] = '\0';
 
         wiadomosc_manualny_wlaczenie[0] = 35;
         wiadomosc_manualny_wlaczenie[1] = 35;
@@ -2514,7 +2529,20 @@ public:
 
         if(przycisk_wysylanie_wolne.zwroc_myszka_na_przycisku())
         {
-            ;
+            if(wybieranie_scrollem_wysylanie_wolne.zwroc_aktualny_wybor() == 0)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_wysylanie_wolne_szybkie[i];
+                }
+            }
+            else if(wybieranie_scrollem_wysylanie_wolne.zwroc_aktualny_wybor() == 0)
+            {
+                for(int i=0; i<9; i++)
+                {
+                    wiadomosc_do_wyslania[i+2] = wiadomosc_wysylanie_wolne_wolne[i];
+                }
+            }
         }
 
         if(przycisk_wyslij_manualny.zwroc_myszka_na_przycisku())
@@ -3189,7 +3217,7 @@ void wysylanie_danych()
     }
     else
     {
-        cout<<"Wyslanie do portu"<<endl;
+        cout<<"Wyslanie do portu: "<<wiadomosc_do_wyslania<<endl;
     }
 
     for(int i=0; i<11; i++)
@@ -3446,6 +3474,9 @@ bool rozszyfrowywanie(string gotowy_tekst)
         rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr_stacja[0], 2);
         rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr_stacja[1], 2);
         rozszyfrowywanie_double(gotowy_tekst, nr_znaku, magnetometr_stacja[2], 2);
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr_stacja[0], 2);
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr_stacja[1], 2);
+        rozszyfrowywanie_double(gotowy_tekst, nr_znaku, akcelerometr_stacja[2], 2);
         rozszyfrowywanie_int(gotowy_tekst, nr_znaku, spis_dzialajacych_stacja);
         rozszyfrowywanie_int(gotowy_tekst, nr_znaku, RSSI_stacja);
     }
@@ -3680,6 +3711,17 @@ void dopisywanie_do_wykresow()
     wskaznik_wykres[34]->dopisz(lokalizacja_stacja[1]);
     wskaznik_wykres[35]->dopisz(temperatura_altimu_stacja);
     wskaznik_wykres[36]->dopisz(cisnienie_altimu_stacja);
+    wskaznik_wykres[37]->dopisz(magnetometr_stacja[0]);
+    wskaznik_wykres[38]->dopisz(magnetometr_stacja[1]);
+    wskaznik_wykres[39]->dopisz(magnetometr_stacja[2]);
+    wskaznik_wykres[40]->dopisz(akcelerometr_stacja[0]);
+    wskaznik_wykres[41]->dopisz(akcelerometr_stacja[1]);
+    wskaznik_wykres[42]->dopisz(akcelerometr_stacja[2]);
+    wskaznik_wykres[43]->dopisz(roznica_wysokosci);
+    wskaznik_wykres[44]->dopisz(odleglosc_prosta);
+    wskaznik_wykres[45]->dopisz(odleglosc_calkowita);
+    wskaznik_wykres[46]->dopisz(kat_wysokosc);
+    wskaznik_wykres[47]->dopisz(kat_obrot);
 }
 
 int main(int argc, char *args[])
@@ -3819,11 +3861,14 @@ int main(int argc, char *args[])
         wskaznik_wykres[37]->przygotowywanie_obiektu("Magnetometr stacja x", "czas[s]");
         wskaznik_wykres[38]->przygotowywanie_obiektu("Magnetometr stacja y", "czas[s]");
         wskaznik_wykres[39]->przygotowywanie_obiektu("Magnetometr stacja z", "czas[s]");
-        wskaznik_wykres[40]->przygotowywanie_obiektu("Roznica wysokosci[m]", "czas[s]");
-        wskaznik_wykres[41]->przygotowywanie_obiektu("Odleglosc prosta[m]", "czas[s]");
-        wskaznik_wykres[42]->przygotowywanie_obiektu("Odleglosc calkowita[m]", "czas[s]");
-        wskaznik_wykres[43]->przygotowywanie_obiektu("Kat wysokosc", "czas[s]");
-        wskaznik_wykres[44]->przygotowywanie_obiektu("Kat obrot", "czas[s]");
+        wskaznik_wykres[40]->przygotowywanie_obiektu("Akcelerometr stacja x", "czas[s]");
+        wskaznik_wykres[41]->przygotowywanie_obiektu("Akcelerometr stacja y", "czas[s]");
+        wskaznik_wykres[42]->przygotowywanie_obiektu("Akcelerometr stacja z", "czas[s]");
+        wskaznik_wykres[43]->przygotowywanie_obiektu("Roznica wysokosci[m]", "czas[s]");
+        wskaznik_wykres[44]->przygotowywanie_obiektu("Odleglosc prosta[m]", "czas[s]");
+        wskaznik_wykres[45]->przygotowywanie_obiektu("Odleglosc calkowita[m]", "czas[s]");
+        wskaznik_wykres[46]->przygotowywanie_obiektu("Kat wysokosc", "czas[s]");
+        wskaznik_wykres[47]->przygotowywanie_obiektu("Kat obrot", "czas[s]");
     }
 
     while(true)
