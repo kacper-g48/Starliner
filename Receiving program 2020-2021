@@ -1,5 +1,19 @@
 #include <RH_RF95.h>
 
+#include <SD.h>
+
+#include <LSM6.h>//biblioteka AltIMU-10 (akcelerometr i zyroskop)
+
+#include <LIS3MDL.h>//biblioteka AltIMU-10 (magnetometr)
+
+#include <LPS.h>//biblioteka AltIMU-10 (temperatura i cisnienie)
+
+LSM6 imu; //zmienna do pomiarow z AltIMU-10 (żyroskop i akcelerometr)
+
+LIS3MDL mag; //zmienna do pomiarow z AltIMU-10 (magnetometr)
+
+LPS ps; //zmienna do pomiarow z AltIMU-10 (temperatura i cisnienie)
+
 #define RFM95_CS 8
 #define RFM95_RST 4
 #define RFM95_INT 3
@@ -59,7 +73,14 @@ RH_RF95 rf95(RFM95_CS, RFM95_INT);
   step_pin - 9
 */
 
+int pin_poziom_kierunek = 6; //dir_pin
+int pin_poziom_kroki = 9; //step_pin
+int pin_wysokosc_kierunek = 10; //dir_pin
+int pin_wysokosc_kroki = 11; //step_pin
 
+int CS_pin_SD = 12;
+
+bool znalezione_SD_stacja = 0;
 bool znalezione_GPS_stacja = 0;
 bool znalezione_altimu_zyro_akce_stacja = 0;
 bool znalezione_altimu_magnetometr_stacja = 0;
@@ -73,12 +94,166 @@ char lokalizacja_znak_stacja[2] = {' ', ' '};
 double temperatura_altimu_stacja = 0;
 double cisnienie_altimu_stacja = 0;
 double magnetometr_stacja[3] = {0.0, 0.0, 0.0};
+double akcelerometr_stacja[3] = {0.0, 0.0, 0.0};
+
+int kroki_obrot = 0;
+bool kierunek_obrot = 0;
+int kroki_wysokosc = 0;
+bool kierunek_wysokosc = 0;
 
 int spis_dzialajacych_stacja = 0;
 int RSSI_stacja = 0;
 
+void rozszyfrowywanie_kroki(char wiadomosc_z_komputera[])
+{
+  if(wiadomosc_z_komputera[0] >= 20 && wiadomosc_z_komputera[0] < 70)
+  {
+    kierunek_obrot = 0;
+    kroki_obrot = wiadomosc_z_komputera[0] - 20;
+  }
+  else if(wiadomosc_z_komputera[0] >= 70 && wiadomosc_z_komputera[0] < 120)
+  {
+    kierunek_obrot = 1;
+    kroki_obrot = wiadomosc_z_komputera[0] - 70;
+  }
+
+  if(wiadomosc_z_komputera[1] >= 20 && wiadomosc_z_komputera[1] < 70)
+  {
+    kierunek_wysokosc = 0;
+    kroki_wysokosc = wiadomosc_z_komputera[1] - 20;
+  }
+  else if(wiadomosc_z_komputera[1] >= 70 && wiadomosc_z_komputera[1] < 120)
+  {
+    kierunek_wysokosc = 1;
+    kroki_wysokosc = wiadomosc_z_komputera[1] - 70;
+  }
+}
+
+void obracanie_obrot()
+{
+  if(kroki_obrot > 0)
+  {
+    if (kierunek_obrot == 0)
+    {
+      digitalWrite(pin_poziom_kierunek, HIGH);
+      for (int i = 0; i < kroki_obrot; i++)
+      {
+        digitalWrite(pin_poziom_kroki, HIGH);
+        delayMicroseconds(10000);
+        digitalWrite(pin_poziom_kroki, LOW);
+        delayMicroseconds(10000);
+      }
+    }
+    else
+    {
+      digitalWrite(pin_poziom_kierunek, LOW);
+  
+      for (int i = 0; i < kroki_obrot; i++)
+      {
+        digitalWrite(pin_poziom_kroki, HIGH);
+        delayMicroseconds(10000);
+        digitalWrite(pin_poziom_kroki, LOW);
+        delayMicroseconds(10000);
+      }
+    }
+  }
+}
+
+void obracanie_wysokosc()
+{
+  if(kroki_wysokosc > 0)
+  {
+    if (kierunek_wysokosc == 0)
+    {
+      digitalWrite(pin_wysokosc_kierunek, LOW);
+      for (int i = 0; i < kroki_wysokosc; i++)
+      {
+        digitalWrite(pin_wysokosc_kroki, HIGH);
+        delayMicroseconds(10000);
+        digitalWrite(pin_wysokosc_kroki, LOW);
+        delayMicroseconds(10000);
+      }
+    }
+    else
+    {
+      digitalWrite(pin_wysokosc_kierunek, HIGH);
+      for (int i = 0; i < kroki_wysokosc; i++)
+      {
+        digitalWrite(pin_wysokosc_kroki, HIGH);
+        delayMicroseconds(10000);
+        digitalWrite(pin_wysokosc_kroki, LOW);
+        delayMicroseconds(10000);
+      }
+    }
+  }
+}
+
+void zapisywanie_SD(uint8_t buf[])
+{
+  digitalWrite(8, HIGH);
+  digitalWrite(CS_pin_SD, LOW);
+
+  File plik = SD.open("test.txt", FILE_WRITE);
+  if(plik)
+  {
+    char tekst_do_zapisania[RH_RF95_MAX_MESSAGE_LEN];
+    for(int i=0; i<RH_RF95_MAX_MESSAGE_LEN; i++)
+    {
+      tekst_do_zapisania[i] = buf[i];
+      if(buf[i] == '\0')
+      {
+        i = RH_RF95_MAX_MESSAGE_LEN;
+      }
+    }
+    plik.println(tekst_do_zapisania);
+  }
+  else
+  {
+    ;
+  }
+  digitalWrite(CS_pin_SD, HIGH);
+  digitalWrite(8, LOW);
+}
+
+void odczytywanie_altimu()
+{
+  if (imu.read() == 0)
+  {
+    akcelerometr_stacja[0] = imu.a.x * 0.488 / 1000;
+    akcelerometr_stacja[1] = imu.a.y * 0.488 / 1000;
+    akcelerometr_stacja[2] = imu.a.z * 0.488 / 1000;
+    znalezione_altimu_zyro_akce_stacja = 1;
+  }
+  else
+  {
+    znalezione_altimu_zyro_akce_stacja = 0;
+  }
+
+  if (mag.read() == 0)
+  {
+    magnetometr_stacja[0] = mag.m.x / 6842.0;
+    magnetometr_stacja[1] = mag.m.y / 6842.0;
+    magnetometr_stacja[2] = mag.m.z / 6842.0;
+    znalezione_altimu_magnetometr_stacja = 1;
+  }
+  else
+  {
+    znalezione_altimu_magnetometr_stacja = 0;
+  }
+
+  if (ps.read(temperatura_altimu_stacja, cisnienie_altimu_stacja) == 0)
+  {
+    znalezione_altimu_temp_cisn_stacja = 1;
+  }
+  else
+  {
+    znalezione_altimu_temp_cisn_stacja = 0;
+  }
+}
+
 void tworzenie_spisu_dzialajacych_stacja()
 {
+  spis_dzialajacych_stacja += (znalezione_SD_stacja?1:0)*32;
   spis_dzialajacych_stacja += (znalezione_GPS_stacja?1:0)*16;
   spis_dzialajacych_stacja += (znalezione_altimu_zyro_akce_stacja?1:0)*8;
   spis_dzialajacych_stacja += (znalezione_altimu_magnetometr_stacja?1:0)*4;
@@ -241,6 +416,15 @@ void przesylanie_do_komputera(uint8_t buf[RH_RF95_MAX_MESSAGE_LEN])
   liczba_dopisanych_znakow += liczba_cyfr_100_magnetometr_stacja[1] + 1;
   liczba_dopisanych_znakow += liczba_cyfr_100_magnetometr_stacja[2] + 1;
 
+  char akcelerometr_stacja_100[3][7];
+  int liczba_cyfr_100_akcelerometr_stacja[3];
+  double_to_char_100(akcelerometr_stacja[0], akcelerometr_stacja_100[0], 2, liczba_cyfr_100_akcelerometr_stacja[0]);
+  double_to_char_100(akcelerometr_stacja[1], akcelerometr_stacja_100[1], 2, liczba_cyfr_100_akcelerometr_stacja[1]);
+  double_to_char_100(akcelerometr_stacja[2], akcelerometr_stacja_100[2], 2, liczba_cyfr_100_akcelerometr_stacja[2]);
+  liczba_dopisanych_znakow += liczba_cyfr_100_akcelerometr_stacja[0] + 1;
+  liczba_dopisanych_znakow += liczba_cyfr_100_akcelerometr_stacja[1] + 1;
+  liczba_dopisanych_znakow += liczba_cyfr_100_akcelerometr_stacja[2] + 1;
+
   char spis_dzialajacych_stacja_100[7];
   int liczba_cyfr_100_spis_dzialajacych_stacja;
   int_to_char_100(spis_dzialajacych_stacja, spis_dzialajacych_stacja_100, liczba_cyfr_100_spis_dzialajacych_stacja);
@@ -287,6 +471,9 @@ void przesylanie_do_komputera(uint8_t buf[RH_RF95_MAX_MESSAGE_LEN])
   dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_stacja_100[0], liczba_cyfr_100_magnetometr_stacja[0], nr_znaku, ujemna_sprawdz(magnetometr_stacja[0]));
   dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_stacja_100[1], liczba_cyfr_100_magnetometr_stacja[1], nr_znaku, ujemna_sprawdz(magnetometr_stacja[1]));
   dopisywanie_gotowy_tekst(gotowy_tekst, magnetometr_stacja_100[2], liczba_cyfr_100_magnetometr_stacja[2], nr_znaku, ujemna_sprawdz(magnetometr_stacja[2]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_stacja_100[0], liczba_cyfr_100_akcelerometr_stacja[0], nr_znaku, ujemna_sprawdz(akcelerometr_stacja[0]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_stacja_100[1], liczba_cyfr_100_akcelerometr_stacja[1], nr_znaku, ujemna_sprawdz(akcelerometr_stacja[1]));
+  dopisywanie_gotowy_tekst(gotowy_tekst, akcelerometr_stacja_100[2], liczba_cyfr_100_akcelerometr_stacja[2], nr_znaku, ujemna_sprawdz(akcelerometr_stacja[2]));
   dopisywanie_gotowy_tekst(gotowy_tekst, spis_dzialajacych_stacja_100, liczba_cyfr_100_spis_dzialajacych_stacja, nr_znaku, 0);
   dopisywanie_gotowy_tekst(gotowy_tekst, RSSI_stacja_100, liczba_cyfr_100_RSSI_stacja, nr_znaku, ujemna_sprawdz(RSSI_stacja));
   
@@ -337,9 +524,58 @@ void przesylanie_do_komputera(uint8_t buf[RH_RF95_MAX_MESSAGE_LEN])
   Serial.println(gotowy_tekst);
 }
 
+void odbieranie_z_komputera_i_odsylanie()
+{
+  char wiadomosc_z_komputera[12];
+  char wiadomosc_do_odeslania[10];
+  int licznik_znaku = 0;
+  int czas_rozpoczecie_czekania = millis();
+
+  while(millis()-czas_rozpoczecie_czekania < 100 && licznik_znaku != 11)
+  {
+    while(Serial.available() > 0)
+    {
+      wiadomosc_z_komputera[licznik_znaku] = Serial.read();
+      licznik_znaku++;
+    }
+  }
+
+  if(licznik_znaku == 11)
+  {
+    for(int i=0; i<10; i++)
+    {
+      wiadomosc_do_odeslania[i] = wiadomosc_z_komputera[i+2];
+    }
+
+    if(wiadomosc_do_odeslania[0] != 80 && wiadomosc_do_odeslania[0] != 90)
+    {
+      rf95.send((uint8_t *)wiadomosc_do_odeslania, 10);
+      rf95.waitPacketSent();
+    }
+    else if(wiadomosc_do_odeslania[0] == 80)
+    {
+      rf95.ustaw_wysylanie_szybkie();
+    }
+    else if(wiadomosc_do_odeslania[0] == 90)
+    {
+      rf95.ustaw_wysylanie_wolne();
+    }
+  }
+
+  rozszyfrowywanie_kroki(wiadomosc_z_komputera);
+}
+
 void setup()
 {
-  digitalWrite(12, HIGH);
+  pinMode(pin_poziom_kierunek, OUTPUT);
+  pinMode(pin_poziom_kroki, OUTPUT);
+  pinMode(pin_wysokosc_kierunek, OUTPUT);
+  pinMode(pin_wysokosc_kroki, OUTPUT);
+
+  pinMode(8, OUTPUT);
+
+  pinMode(CS_pin_SD, OUTPUT);
+  digitalWrite(CS_pin_SD, HIGH);
 
   pinMode(RFM95_RST, OUTPUT);
   digitalWrite(RFM95_RST, HIGH);
@@ -358,7 +594,6 @@ void setup()
     znalezione_nadajnik_stacja = 0;
   }
 
-
   if (!rf95.setFrequency(RF95_FREQ))
   {
     znalezione_nadajnik_stacja = 0;
@@ -366,6 +601,28 @@ void setup()
 
   rf95.setTxPower(23, false);
 
+  imu.init();//zainicjowanie AltIMU-10 (zyroskop i akcelerometr)
+  imu.enableDefault();//zainicjowanie AltIMU-10 (zyroskop i akcelerometr)
+
+  mag.init();//zainicjowanie AltIMU-10 (magnetometr)
+  mag.enableDefault();//zainicjowanie AltIMU-10 (magnetometr)
+
+  ps.init();//zainicjowanie AltIMU-10 (temperatura i cisnienie)
+  ps.enableDefault();//zainicjowanie AltIMU-10 (temperatura i cisnienie)
+
+  digitalWrite(CS_pin_SD, LOW);
+
+  if (!SD.begin(CS_pin_SD))
+  {
+    znalezione_SD_stacja = 0;
+  }
+  else
+  {
+    znalezione_SD_stacja = 1;
+  }
+  digitalWrite(CS_pin_SD, HIGH);
+
+  
   digitalWrite(8, LOW); //wlaczenie nadajnika
 }
 
@@ -378,7 +635,12 @@ void loop()
 
     if (rf95.recv(buf, &len))
     {
-      //digitalWrite(13, HIGH);
+      digitalWrite(13, HIGH);
+
+      if(znalezione_SD_stacja == 1)
+      {
+        zapisywanie_SD(buf);
+      }
 
       lokalizacja_stacja[0] = 0;
       lokalizacja_stacja[1] = 0;
@@ -392,40 +654,45 @@ void loop()
 
       RSSI_stacja = rf95.lastRssi();
 
+      odczytywanie_altimu();
+      
       przesylanie_do_komputera(buf);
 
-      char wiadomosc_z_komputera[12];
-      char wiadomosc_do_odeslania[10];
-      int licznik_znaku = 0;
-      int czas_rozpoczecie_czekania = millis();
+      odbieranie_z_komputera_i_odsylanie();
 
-      while(millis()-czas_rozpoczecie_czekania < 100 && licznik_znaku != 11)
-      {
-        while(Serial.available() > 0)
-        {
-          wiadomosc_z_komputera[licznik_znaku] = Serial.read();
-          licznik_znaku++;
-        }
-      }
-
-      if(licznik_znaku == 11)
-      {
-        digitalWrite(13, HIGH);
-        for(int i=0; i<10; i++)
-        {
-          wiadomosc_do_odeslania[i] = wiadomosc_z_komputera[i+2];
-        }
-
-        rf95.send((uint8_t *)wiadomosc_do_odeslania, 10);
-        rf95.waitPacketSent();
-        digitalWrite(13, LOW);
-      }
+      obracanie_obrot();
+      obracanie_wysokosc();
       
-      //digitalWrite(13, LOW);
+      digitalWrite(13, LOW);
     }
     else
     {
-      ;
+      uint8_t buf[4];
+      buf[0] = 15;
+      buf[1] = 15;
+      buf[2] = 15;
+      buf[3] = '\0';
+  
+      lokalizacja_stacja[0] = 0;
+      lokalizacja_stacja[1] = 0;
+      lokalizacja_znak_stacja[0] = ' ';
+      lokalizacja_znak_stacja[1] = ' ';
+      temperatura_altimu_stacja = 0;
+      cisnienie_altimu_stacja = 0;
+      magnetometr_stacja[0] = 0;
+      magnetometr_stacja[1] = 0;
+      magnetometr_stacja[2] = 0;
+  
+      RSSI_stacja = 0;
+      
+      odczytywanie_altimu();
+  
+      przesylanie_do_komputera(buf);
+  
+      odbieranie_z_komputera_i_odsylanie();
+
+      obracanie_obrot();
+      obracanie_wysokosc();
     }
   }
   else
@@ -447,34 +714,14 @@ void loop()
     magnetometr_stacja[2] = 0;
 
     RSSI_stacja = 0;
+    
+    odczytywanie_altimu();
 
     przesylanie_do_komputera(buf);
 
-    char wiadomosc_z_komputera[12];
-    char wiadomosc_do_odeslania[10];
-    int licznik_znaku = 0;
-    int czas_rozpoczecie_czekania = millis();
+    odbieranie_z_komputera_i_odsylanie();
 
-    while(millis()-czas_rozpoczecie_czekania < 100 && licznik_znaku != 11)
-    {
-      while(Serial.available() > 0)
-      {
-        wiadomosc_z_komputera[licznik_znaku] = Serial.read();
-        licznik_znaku++;
-      }
-    }
-
-    if(licznik_znaku == 11)
-    {
-      digitalWrite(13, HIGH);
-      for(int i=0; i<10; i++)
-      {
-        wiadomosc_do_odeslania[i] = wiadomosc_z_komputera[i+2];
-      }
-
-      rf95.send((uint8_t *)wiadomosc_do_odeslania, 10);
-      rf95.waitPacketSent();
-      digitalWrite(13, LOW);
-    }
+    obracanie_obrot();
+    obracanie_wysokosc();
   }
 }
